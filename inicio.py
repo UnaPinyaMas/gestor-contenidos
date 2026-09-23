@@ -36,7 +36,7 @@ def mostrar_inicio():
     try:
 
         if VIDEO_INICIO.exists():
-            reproductor = VideoPlayer(VIDEO_INICIO, audio=false)
+            reproductor = VideoPlayer(VIDEO_INICIO)
 
         while ejecutando:
 
