@@ -1,5 +1,13 @@
 __pycache__/
 *.py[cod]
 
-videos/*
-!videos/.gitkeep
+recursos/videos/*
+!recursos/videos/.gitkeep
+recursos/imagenes/*
+!recursos/imagenes/.gitkeep
+recursos/juegos/*
+!recursos/juegos/.gitkeep
+recursos/epub/*
+!recursos/epub/.gitkeep
+recursos/archivos/*
+!recursos/archivos/.gitkeep
