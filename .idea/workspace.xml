@@ -22,23 +22,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.0" />
-      <entry key="MS500" value="1.0" />
-      <entry key="S2" value="1.0" />
-      <entry key="S5" value="1.0" />
-      <entry key="S10" value="1.0" />
-      <entry key="S30" value="1.0" />
-      <entry key="S60" value="1.0" />
-      <entry key="M2" value="1.0" />
-      <entry key="M5" value="1.0" />
-      <entry key="M10" value="1.0" />
-      <entry key="M15" value="1.0" />
-      <entry key="M30" value="1.0" />
-      <entry key="H1" value="1.0" />
-      <entry key="H2" value="1.0" />
-      <entry key="H4" value="1.0" />
-      <entry key="D1" value="1.0" />
-      <entry key="W1" value="1.0" />
+      <entry key="MS100" value="1.0005417819687832" />
+      <entry key="MS500" value="1.2222106702916427" />
+      <entry key="S2" value="1.6865801249374466" />
+      <entry key="S5" value="1.8603526306114397" />
+      <entry key="S10" value="1.92755195576899" />
+      <entry key="S30" value="1.9755198148252466" />
+      <entry key="S60" value="2.004187863134284" />
+      <entry key="M2" value="2.122764198278383" />
+      <entry key="M5" value="2.4383066063380365" />
+      <entry key="M10" value="2.66268284473703" />
+      <entry key="M15" value="2.76022185450324" />
+      <entry key="M30" value="2.8719681588706107" />
+      <entry key="H1" value="2.933807113386969" />
+      <entry key="H2" value="2.9663405832748575" />
+      <entry key="H4" value="2.9830271362721423" />
+      <entry key="D1" value="2.997151098599722" />
+      <entry key="W1" value="2.9995925193301707" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -60,23 +60,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="0.03564886612088823" />
-      <entry key="MS500" value="0.5133447728599995" />
-      <entry key="S2" value="0.8464519036463619" />
-      <entry key="S5" value="0.9354938018635298" />
-      <entry key="S10" value="0.9672092854514631" />
-      <entry key="S30" value="0.9889480665648257" />
-      <entry key="S60" value="0.994458680169682" />
-      <entry key="M2" value="0.9972254911351203" />
-      <entry key="M5" value="0.9988892713367401" />
-      <entry key="M10" value="0.9994444813678948" />
-      <entry key="M15" value="0.9996296199478001" />
-      <entry key="M30" value="0.9998147928230509" />
-      <entry key="H1" value="0.9999073921234161" />
-      <entry key="H2" value="0.999953694989631" />
-      <entry key="H4" value="0.99997684722679" />
-      <entry key="D1" value="0.9999961411672387" />
-      <entry key="W1" value="0.9999994487372653" />
+      <entry key="MS100" value="0.006215215442850707" />
+      <entry key="MS500" value="0.4006717396835599" />
+      <entry key="S2" value="1.2191601363033626" />
+      <entry key="S5" value="1.6257419956660102" />
+      <entry key="S10" value="1.8003820523048382" />
+      <entry key="S30" value="1.9307194189283567" />
+      <entry key="S60" value="1.9813815305961324" />
+      <entry key="M2" value="2.1109692127314488" />
+      <entry key="M5" value="2.4332228250171055" />
+      <entry key="M10" value="2.6600136995574" />
+      <entry key="M15" value="2.7584057096006505" />
+      <entry key="M30" value="2.871039094205804" />
+      <entry key="H1" value="2.9333367797676813" />
+      <entry key="H2" value="2.966103891303789" />
+      <entry key="H4" value="2.98290839926268" />
+      <entry key="D1" value="2.997131253944921" />
+      <entry key="W1" value="2.9995896830176583" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -150,7 +150,7 @@
       <option name="presentableId" value="Default" />
       <updated>1789634953115</updated>
       <workItem from="1789634954144" duration="1447000" />
-      <workItem from="1790144736087" duration="978000" />
+      <workItem from="1790144736087" duration="1327000" />
     </task>
     <servers />
   </component>
