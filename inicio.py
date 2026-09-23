@@ -1,10 +1,17 @@
 import pygame
+from pathlib import Path
+from video_player import VideoPlayer
 import menu
 
 
 ANCHO = 800
 ALTO = 480
 FPS = 60
+
+
+BASE = Path(__file__).resolve().parent
+VIDEO_INICIO = BASE / "recursos" / "videos" / "intro.mp4"
+LOGO = BASE / "recursos" / "imagenes" / "logo.png"
 
 
 def mostrar_inicio():
@@ -14,7 +21,7 @@ def mostrar_inicio():
 
     reloj = pygame.time.Clock()
 
-    logo = pygame.image.load("recursos/logo.png").convert_alpha()
+    logo = pygame.image.load(LOGO).convert_alpha()
     logo = pygame.transform.smoothscale(logo, (250, 250))
 
     logo_rect = logo.get_rect()
@@ -24,38 +31,66 @@ def mostrar_inicio():
     esperando = False
     ejecutando = True
 
-    while ejecutando:
+    reproductor = None
 
-        for evento in pygame.event.get():
+    try:
 
-            if evento.type == pygame.QUIT:
-                return
+        if VIDEO_INICIO.exists():
+            reproductor = VideoPlayer(VIDEO_INICIO)
 
-            if esperando:
+        while ejecutando:
+
+            for evento in pygame.event.get():
+
+                if evento.type == pygame.QUIT:
+                    ejecutando = False
 
                 if evento.type == pygame.KEYDOWN:
+
                     ejecutando = False
 
                 if evento.type == pygame.MOUSEBUTTONDOWN:
+
                     ejecutando = False
 
                 if evento.type == pygame.FINGERDOWN:
+
                     ejecutando = False
 
-        pantalla.fill((10, 15, 20))
+            if reproductor:
 
-        if alpha < 255:
-            alpha += 5
+                reproductor.update()
 
-        else:
-            esperando = True
+                if reproductor.ended:
+                    esperando = True
 
-        logo.set_alpha(alpha)
+            pantalla.fill((10, 15, 20))
 
-        pantalla.blit(logo, logo_rect)
+            if reproductor:
 
-        pygame.display.flip()
+                pantalla.blit(
+                    reproductor.surface,
+                    (0, 15)
+                )
 
-        reloj.tick(FPS)
+            if alpha < 255:
+                alpha += 5
 
-    menu.mostrar_menu()
+            logo.set_alpha(alpha)
+
+            pantalla.blit(
+                logo,
+                logo_rect
+            )
+
+            pygame.display.flip()
+
+            reloj.tick(FPS)
+
+    finally:
+
+        if reproductor:
+            reproductor.close()
+
+    if ejecutando:
+        menu.mostrar_menu()
