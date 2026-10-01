@@ -62,7 +62,12 @@ def ejecutar_juego(juego):
         str(juego)
     ]
 
-    subprocess.run(comando, check=False)
+    subprocess.run(
+	comando,
+	check=False,
+	stdout=subprocess.DEVNULL,
+	stderr=subprocess.DEVNULL
+)
 
     pygame.display.init()
     pygame.display.set_mode((800, 480))
