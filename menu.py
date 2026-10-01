@@ -2,6 +2,7 @@
 from pathlib import Path
 import pygame
 from video_player import VideoPlayer
+from juegos import ejecutar_juego
 
 ANCHO, ALTO = 800, 600
 BASE = Path(__file__).resolve().parent
@@ -10,6 +11,7 @@ CARPETAS = {"Videos": "videos", "Juegos": "juegos", "EPUB": "epub",
             "Fotos": "imagenes", "Archivos": "archivos"}
 VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
 FOTO_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+JUEGO_EXT = {".gb", ".gbc", ".sgb"}
 FONDO = (10, 15, 20)
 AZUL, VERDE, ROJO = (21, 101, 192), (46, 125, 50), (165, 55, 65)
 POR_PAGINA = 5
@@ -117,6 +119,9 @@ class Menu:
             elif path.is_dir():
                 self.carpeta = path
                 self.pagina = 0
+                self.actualizar()
+            elif path.suffix.lower() in JUEGO_EXT:
+                ejecutar_juego(path)
                 self.actualizar()
             elif path.suffix.lower() in VIDEO_EXT:
                 self.player = VideoPlayer(path)
