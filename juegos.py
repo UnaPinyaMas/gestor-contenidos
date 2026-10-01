@@ -1,3 +1,4 @@
+import pygame
 import subprocess
 from pathlib import Path
 
@@ -47,14 +48,12 @@ def buscar_juegos():
 
 
 def ejecutar_juego(juego):
-
     juego = Path(juego)
 
     if not juego.exists():
+        raise FileNotFoundError(f"No existe el juego: {juego}")
 
-        raise FileNotFoundError(
-            f"No existe el juego: {juego}"
-        )
+    pygame.display.quit()
 
     comando = [
         RETROARCH,
@@ -63,7 +62,7 @@ def ejecutar_juego(juego):
         str(juego)
     ]
 
-    return subprocess.run(
-        comando,
-        check=False
-    )
+    subprocess.run(comando, check=False)
+
+    pygame.display.init()
+    pygame.display.set_mode((800, 480))
