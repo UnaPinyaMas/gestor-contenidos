@@ -3,13 +3,15 @@ from pathlib import Path
 import pygame
 from video_player import VideoPlayer
 from juegos import ejecutar_juego
+from documentos import LectorDocumento
 
 ANCHO, ALTO = 800, 600
 BASE = Path(__file__).resolve().parent
 RECURSOS = BASE / "recursos"
-CARPETAS = {"Videos": "videos", "Juegos": "juegos", "EPUB": "epub",
-            "Fotos": "imagenes", "Archivos": "archivos"}
+CARPETAS = {"Videos": "videos", "Audio": "audio", "PDF": "pdf",
+            "EPUB": "epub", "Juegos": "juegos", "Fotos": "imagenes", "Archivos": "archivos"}
 VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
+AUDIO_EXT = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus", ".wma"}
 FOTO_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 JUEGO_EXT = {".gb", ".gbc", ".sgb"}
 FONDO = (10, 15, 20)
@@ -81,6 +83,9 @@ class Menu:
         self.pausa = False
         self.foto = None
         self.nombre = ""
+        self.documento = None
+        self.pagina_documento = None
+        self.volumen = 70
 
     def actualizar(self):
         try:
@@ -96,11 +101,19 @@ class Menu:
         self.pagina = min(self.pagina, max(0, (len(self.archivos) - 1) // POR_PAGINA))
         self.sucio = True
 
-    def volver(self):
+    def cerrar_contenido(self):
         if self.player:
             self.player.close()
             self.player = None
-        if self.estado in ("video", "foto"):
+        if self.documento:
+            self.documento.close()
+            self.documento = None
+        self.pagina_documento = None
+        self.foto = None
+
+    def volver(self):
+        self.cerrar_contenido()
+        if self.estado in ("video", "audio", "foto", "documento"):
             self.estado = "carpeta"
             self.foto = None
         elif self.estado == "carpeta" and self.carpeta != self.raiz:
@@ -121,11 +134,21 @@ class Menu:
                 self.pagina = 0
                 self.actualizar()
             elif path.suffix.lower() in JUEGO_EXT:
-                ejecutar_juego(path)
-                self.actualizar()
-            elif path.suffix.lower() in VIDEO_EXT:
-                self.player = VideoPlayer(path)
-                self.estado = "video"
+                try:
+                    ejecutar_juego(path)
+                finally:
+                    self.vista = Vista()
+                    self.actualizar()
+            elif path.suffix.lower() in {".pdf", ".epub"}:
+                self.documento = LectorDocumento(path)
+                self.pagina_documento = self.documento.render()
+                self.estado = "documento"
+                self.nombre = path.name
+            elif path.suffix.lower() in VIDEO_EXT | AUDIO_EXT:
+                es_audio = path.suffix.lower() in AUDIO_EXT
+                self.player = VideoPlayer(path, video=not es_audio)
+                self.player.command("set", "volume", str(self.volumen))
+                self.estado = "audio" if es_audio else "video"
                 self.pausa = False
                 self.nombre = path.name
             elif path.suffix.lower() in FOTO_EXT:
@@ -137,8 +160,10 @@ class Menu:
                 self.estado = "foto"
             else:
                 self.aviso = f"{path.name}: {path.stat().st_size:,} bytes. Visor pendiente."
-        except (OSError, RuntimeError, pygame.error) as error:
-            self.aviso = "No se ha podido abrir el archivo."
+        except Exception as error:
+            self.cerrar_contenido()
+            self.estado = "carpeta"
+            self.aviso = "No se ha podido abrir el archivo: " + str(error)
             print("Error al abrir:", error, flush=True)
         self.sucio = True
 
@@ -154,6 +179,25 @@ class Menu:
             self.actualizar()
         elif accion == "salir":
             self.ejecutando = False
+        elif accion == "inicio":
+            self.cerrar_contenido()
+            self.estado = "menu"
+        elif accion.startswith("doc_") and self.documento:
+            try:
+                if accion == "doc_anterior":
+                    self.documento.mover_pagina(-1)
+                elif accion == "doc_siguiente":
+                    self.documento.mover_pagina(1)
+                elif accion in ("doc_mas", "doc_menos"):
+                    self.documento.ampliar(.5 if accion == "doc_mas" else -.5)
+                else:
+                    dx, dy = {"doc_izq": (-90, 0), "doc_der": (90, 0),
+                              "doc_arriba": (0, -90), "doc_abajo": (0, 90)}[accion]
+                    self.documento.desplazar(dx, dy)
+                self.pagina_documento = self.documento.render()
+            except Exception as error:
+                self.volver()
+                self.aviso = "No se pudo leer la página: " + str(error)
         elif accion == "volver":
             self.volver()
         elif accion == "actualizar":
@@ -162,26 +206,34 @@ class Menu:
             self.pagina = max(0, self.pagina - 1)
         elif accion == "siguiente":
             self.pagina = min(max(0, (len(self.archivos) - 1) // POR_PAGINA), self.pagina + 1)
-        elif accion == "pausa" and self.player:
-            self.player.command("cycle", "pause")
-            self.pausa = not self.pausa
+        elif accion in ("pausa", "retroceder", "adelantar", "vol_menos", "vol_mas") and self.player:
+            try:
+                if accion == "pausa":
+                    self.player.command("cycle", "pause")
+                    self.pausa = not self.pausa
+                elif accion in ("retroceder", "adelantar"):
+                    self.player.command("seek", "-10" if accion == "retroceder" else "10", "relative")
+                else:
+                    self.volumen = max(0, min(100, self.volumen + (-10 if accion == "vol_menos" else 10)))
+                    self.player.command("set", "volume", str(self.volumen))
+            except RuntimeError as error:
+                self.volver()
+                self.aviso = "Error de reproducción: " + str(error)
 
     def dibujar(self):
         v = self.vista
         v.lienzo.fill(FONDO)
         v.botones = []
-        v.boton("Salir", (16, 16, 112, 56), "salir", ROJO)
         if self.estado == "menu":
+            v.boton("Salir", (16, 16, 112, 56), "salir", ROJO)
             v.texto("TerraHub", (400, 48))
-            for nombre, rect, color in [
-                ("Videos", (40, 150, 220, 120), VERDE),
-                ("Juegos", (290, 150, 220, 120), AZUL),
-                ("EPUB", (540, 150, 220, 120), (150, 105, 0)),
-                ("Fotos", (165, 310, 220, 120), VERDE),
-                ("Archivos", (415, 310, 220, 120), AZUL)]:
-                v.boton(nombre, rect, nombre, color)
+            for i, nombre in enumerate(CARPETAS):
+                fila, columna = divmod(i, 3)
+                v.boton(nombre, (35 + columna * 255, 125 + fila * 145, 220, 115),
+                        nombre, VERDE if i % 2 == 0 else AZUL)
         else:
-            v.boton("Volver", (144, 16, 120, 56), "volver")
+            v.boton("Volver", (16, 16, 120, 56), "volver")
+            v.boton("Inicio", (148, 16, 112, 56), "inicio")
             if self.estado == "carpeta":
                 v.texto(self.categoria, (440, 44), 280)
                 v.boton("Actualizar", (624, 16, 160, 56), "actualizar")
@@ -203,7 +255,28 @@ class Menu:
                 v.texto(self.nombre, (535, 44), 480)
                 if self.estado == "video" and self.player:
                     v.lienzo.blit(self.player.surface, (0, 80))
-                    v.boton("Continuar" if self.pausa else "Pausar", (300, 536, 200, 56), "pausa")
+                elif self.estado == "audio":
+                    v.texto("Reproducción de audio", (400, 230))
+                    v.texto("En pausa" if self.pausa else "Reproduciendo", (400, 300))
+                if self.estado in ("video", "audio") and self.player:
+                    v.boton("-10 s", (16, 536, 110, 56), "retroceder")
+                    v.boton("Continuar" if self.pausa else "Pausar", (138, 536, 170, 56), "pausa")
+                    v.boton("+10 s", (320, 536, 110, 56), "adelantar")
+                    v.boton("Vol -", (450, 536, 100, 56), "vol_menos")
+                    v.texto(str(self.volumen) + "%", (605, 564), 90)
+                    v.boton("Vol +", (660, 536, 120, 56), "vol_mas")
+                elif self.estado == "documento" and self.documento:
+                    v.lienzo.blit(self.pagina_documento, (20, 82))
+                    for i, (label, accion) in enumerate([
+                        ("Zoom -", "doc_menos"), ("Zoom +", "doc_mas"),
+                        ("Izq.", "doc_izq"), ("Der.", "doc_der"),
+                        ("Arriba", "doc_arriba"), ("Abajo", "doc_abajo")]):
+                        v.boton(label, (20 + i * 128, 480, 120, 50), accion)
+                    if self.documento.pagina > 0:
+                        v.boton("Anterior", (20, 540, 165, 52), "doc_anterior")
+                    v.texto(f"{self.documento.pagina + 1} / {self.documento.total}", (400, 566), 200)
+                    if self.documento.pagina + 1 < self.documento.total:
+                        v.boton("Siguiente", (615, 540, 165, 52), "doc_siguiente")
                 elif self.foto:
                     v.lienzo.blit(self.foto, self.foto.get_rect(center=(400, 310)))
         v.preparar()
@@ -211,10 +284,12 @@ class Menu:
 
     def evento(self, evento):
         if evento.type == pygame.QUIT:
-            self.ejecutando = False
+            self.accion("salir" if self.estado == "menu" else "volver")
         elif evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_ESCAPE:
                 self.accion("salir" if self.estado == "menu" else "volver")
+            elif self.documento and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                self.accion("doc_anterior" if evento.key == pygame.K_LEFT else "doc_siguiente")
             elif evento.key == pygame.K_SPACE and self.player:
                 self.accion("pausa")
         else:
@@ -250,14 +325,14 @@ class Menu:
                             aviso = self.player.error
                             self.volver()
                             self.aviso = aviso
-                        elif nuevo:
+                        elif nuevo and self.estado == "video":
                             self.vista.lienzo.blit(self.player.surface, (0, 80))
                             self.vista.preparar()
                             presentar = True
                     except RuntimeError as error:
                         print("Error de reproduccion:", error, flush=True)
                         self.volver()
-                        self.aviso = "No se pudo reproducir este video."
+                        self.aviso = "No se pudo reproducir este contenido."
                 if self.sucio:
                     self.dibujar()
                     presentar = True
@@ -265,9 +340,7 @@ class Menu:
                     self.vista.presentar()
                 reloj.tick(60)
         finally:
-            if self.player:
-                self.player.close()
-                self.player = None
+            self.cerrar_contenido()
 
 
 def mostrar_menu():

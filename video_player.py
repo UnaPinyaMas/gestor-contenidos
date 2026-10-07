@@ -31,7 +31,7 @@ CALLBACK = C.CFUNCTYPE(None, C.c_void_p)
 
 class VideoPlayer:
 
-    def __init__(self, path, audio=True):
+    def __init__(self, path, audio=True, video=True):
 
         self.handle = None
         self.context = C.c_void_p()
@@ -167,6 +167,9 @@ class VideoPlayer:
                 "profile": "sw-fast",
                 "audio-display": "no"
             }
+
+            if not video:
+                options["vid"] = "no"
 
             if not audio:
 
@@ -395,7 +398,7 @@ class VideoPlayer:
                 if end.reason == 4:
 
                     self.error = (
-                        "No se pudo reproducir este video."
+                        "No se pudo reproducir este contenido."
                     )
 
             # MPV_EVENT_START_FILE / error
@@ -404,7 +407,7 @@ class VideoPlayer:
                 self.ended = True
 
                 self.error = (
-                    "No se pudo abrir este video."
+                    "No se pudo abrir este contenido."
                 )
 
         return nuevo_frame
