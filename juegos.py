@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import pygame
+from audio_config import dispositivo_audio
 
 BASE = Path(__file__).resolve().parent
 JUEGOS = BASE / 'recursos' / 'juegos'
@@ -69,6 +70,9 @@ def configurar_controles():
     if not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY'):
         settings['video_context_driver'] = 'kms'
         settings['audio_driver'] = 'alsa'
+        settings['audio_device'] = dispositivo_audio()
+        settings['audio_enable'] = 'true'
+        settings['audio_mute_enable'] = 'false'
     config.write_text(''.join(f'{k} = "{v}"\n' for k, v in settings.items()), encoding='utf-8')
     return config, cache / 'retroarch.log'
 

@@ -16,6 +16,9 @@ test -f /home/joviat/.config/retroarch/cores/gearboy_libretro.so || {
     exit 1
 }
 install -m 644 "$BASE/deploy/terrahub.service" /etc/systemd/system/terrahub.service
+install -m 644 "$BASE/deploy/99-terrahub-touch.rules" /etc/udev/rules.d/99-terrahub-touch.rules
+udevadm control --reload-rules
+udevadm trigger --subsystem-match=input --action=change
 systemctl daemon-reload
 systemctl enable terrahub.service
 systemctl restart terrahub.service

@@ -67,8 +67,9 @@ sudo sh deploy/instalar.sh
 
 El instalador está preparado para el usuario `joviat` y esa ruta. El servicio ocupa
 la consola virtual 8 y deja la consola 1 disponible. Inicia la aplicación sin
-contraseña ni escritorio, y la reinicia si falla. Salir desde el menú principal
-finaliza limpiamente y devuelve la consola 1; volverá a arrancar al encender la Pi.
+contraseña ni escritorio, y la reinicia si se cierra o falla. Salir desde el menú
+principal vuelve a abrir TerraHub. `systemctl stop terrahub` la detiene para
+mantenimiento sin reinicio automático.
 
 ```bash
 sudo systemctl status terrahub
@@ -98,6 +99,19 @@ acceso a la pantalla; arrancar el servicio por SSH es el método recomendado.
 
 La configuración táctil de RetroArch se genera por ejecución y no sobrescribe
 su configuración general. Los controles multitáctiles dependen del hardware.
+
+La pantalla QDtech MPI5001 necesita la regla `deploy/99-terrahub-touch.rules`
+para que el controlador udev de RetroArch la abra como puntero absoluto. El
+instalador la activa sin eliminar su identificación táctil para Pygame. Este
+modo de compatibilidad del emulador utiliza un punto de contacto a la vez.
+
+El audio de mpv y RetroArch utiliza automáticamente la pantalla HDMI que anuncia
+soporte de sonido. Conecta los altavoces al jack de esa pantalla. Para forzar el
+jack de la Raspberry, establece `TERRAHUB_AUDIO_DEVICE=plughw:CARD=Headphones,DEV=0`
+en el entorno de la aplicación (o mediante un override de systemd). Sin pantalla
+HDMI con audio se usa la salida ALSA predeterminada.
+Antes de cada audio o vídeo, mpv reproduce tres segundos de silencio en la misma
+sesión. Así la pantalla activa su salida HDMI antes de recibir el contenido real.
 
 ## Verificación
 

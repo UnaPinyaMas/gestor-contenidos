@@ -1,0 +1,3 @@
+# RetroArch udev de Debian también busca punteros absolutos bajo ID_INPUT_MOUSE.
+# Conservar TOUCHSCREEN para que SDL/Pygame siga recibiendo eventos táctiles.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0484", ATTRS{idProduct}=="5750", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{ID_INPUT_MOUSE}="1"

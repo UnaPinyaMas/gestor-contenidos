@@ -1,6 +1,9 @@
 import ctypes as C
 import threading
+from pathlib import Path
+import wave
 import pygame
+from audio_config import dispositivo_audio
 
 
 class Param(C.Structure):
@@ -31,6 +34,19 @@ CALLBACK = C.CFUNCTYPE(None, C.c_void_p)
 
 class VideoPlayer:
 
+    @staticmethod
+    def silencio_inicial():
+        """Activa el enlace HDMI antes de enviar el contenido real."""
+        path = Path(__file__).resolve().parent / '.cache' / 'audio' / 'silencio.wav'
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(path), 'wb') as output:
+                output.setnchannels(2)
+                output.setsampwidth(2)
+                output.setframerate(48000)
+                output.writeframes(b'\x00\x00\x00\x00' * (48000 * 3))
+        return path
+
     def __init__(self, path, audio=True, video=True):
 
         self.handle = None
@@ -38,6 +54,7 @@ class VideoPlayer:
 
         self.ended = False
         self.error = ""
+        self.warmup = False
 
         self.changed = threading.Event()
 
@@ -174,6 +191,16 @@ class VideoPlayer:
             if not audio:
 
                 options["ao"] = "null"
+            else:
+                options["ao"] = "alsa"
+                dispositivo = dispositivo_audio()
+                options["audio-device"] = "alsa/" + dispositivo
+                self.warmup = 'vc4hdmi' in dispositivo
+                if self.warmup:
+                    options["gapless-audio"] = "yes"
+                    options["audio-samplerate"] = "48000"
+                    options["audio-format"] = "s16"
+                    options["audio-channels"] = "stereo"
 
             for key, value in options.items():
 
@@ -298,10 +325,11 @@ class VideoPlayer:
                 Param()
             )
 
-            self.command(
-                "loadfile",
-                str(path)
-            )
+            if self.warmup:
+                self.command('loadfile', str(self.silencio_inicial()), 'replace')
+                self.command('loadfile', str(path), 'append')
+            else:
+                self.command('loadfile', str(path))
 
         except Exception:
 
@@ -393,6 +421,9 @@ class VideoPlayer:
                     C.POINTER(EndFile)
                 ).contents
 
+                if self.warmup:
+                    self.warmup = False
+                    continue
                 self.ended = True
 
                 if end.reason == 4:
