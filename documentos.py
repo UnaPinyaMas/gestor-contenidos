@@ -32,9 +32,20 @@ class LectorDocumento:
         self.x = self.y = 0
 
     def ampliar(self, paso):
-        self.zoom = max(1.0, min(4.0, self.zoom + paso))
+        zoom = max(1.0, min(4.0, self.zoom + paso))
+        if zoom == self.zoom:
+            return
+        if self.doc.is_reflowable:
+            bookmark = self.doc.make_bookmark(self.doc.location_from_page_number(self.pagina))
+            self.doc.layout(width=self.size[0], height=self.size[1], fontsize=22 * zoom)
+            self.total = self.doc.page_count
+            self.pagina = self.doc.page_number_from_location(self.doc.find_bookmark(bookmark))
+            self.x = self.y = 0
+        self.zoom = zoom
 
     def desplazar(self, dx, dy):
+        if self.doc.is_reflowable:
+            return
         self.x += dx
         self.y += dy
 
@@ -42,7 +53,9 @@ class LectorDocumento:
         page = self.doc.load_page(self.pagina)
         rect = page.rect
         w, h = self.size
-        scale = min(w / rect.width, h / rect.height) * self.zoom
+        scale = min(w / rect.width, h / rect.height)
+        if not self.doc.is_reflowable:
+            scale *= self.zoom
         visible_w, visible_h = w / scale, h / scale
         self.x = max(0, min(self.x, max(0, rect.width - visible_w)))
         self.y = max(0, min(self.y, max(0, rect.height - visible_h)))

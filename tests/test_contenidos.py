@@ -79,6 +79,31 @@ class ContenidosTest(unittest.TestCase):
         self.assertEqual(self.m.estado, 'carpeta')
         self.assertTrue(self.m.aviso)
         self.assertIsNone(self.m.documento)
+
+    def test_epub_zoom_repagina_sin_recortar(self):
+        self.m.abrir(self.epub)
+        lector = self.m.documento
+        total = lector.total
+        lector.mover_pagina(3)
+        bookmark = lector.doc.make_bookmark(lector.doc.location_from_page_number(lector.pagina))
+        self.m.accion('doc_mas')
+        self.assertGreater(lector.total, total)
+        self.assertEqual(lector.pagina, lector.doc.page_number_from_location(lector.doc.find_bookmark(bookmark)))
+        page = lector.doc.load_page(lector.pagina)
+        self.assertEqual(tuple(page.rect)[2:], tuple(lector.size))
+        spans = [s for b in page.get_text('dict')['blocks'] if 'lines' in b
+                 for line in b['lines'] for s in line['spans']]
+        self.assertTrue(spans)
+        self.assertGreater(spans[0]['size'], 22)
+        self.assertTrue(all(s['bbox'][0] >= 0 and s['bbox'][2] <= lector.size[0] for s in spans))
+        lector.desplazar(100, 100)
+        self.assertEqual((lector.x, lector.y), (0, 0))
+        self.assertEqual(lector.render().get_size(), lector.size)
+        self.m.dibujar()
+        acciones = [a for _, a in self.m.vista.botones]
+        self.assertNotIn('doc_der', acciones)
+        self.m.accion('doc_menos')
+        self.assertEqual(lector.total, total)
         self.assertTrue(self.m.ejecutando)
 
     def test_pdf_protegido(self):

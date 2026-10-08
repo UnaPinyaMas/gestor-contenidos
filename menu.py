@@ -267,10 +267,13 @@ class Menu:
                     v.boton("Vol +", (660, 536, 120, 56), "vol_mas")
                 elif self.estado == "documento" and self.documento:
                     v.lienzo.blit(self.pagina_documento, (20, 82))
-                    for i, (label, accion) in enumerate([
+                    controles = [
                         ("Zoom -", "doc_menos"), ("Zoom +", "doc_mas"),
                         ("Izq.", "doc_izq"), ("Der.", "doc_der"),
-                        ("Arriba", "doc_arriba"), ("Abajo", "doc_abajo")]):
+                        ("Arriba", "doc_arriba"), ("Abajo", "doc_abajo")]
+                    if self.documento.doc.is_reflowable:
+                        controles = [("Letra -", "doc_menos"), ("Letra +", "doc_mas")]
+                    for i, (label, accion) in enumerate(controles):
                         v.boton(label, (20 + i * 128, 480, 120, 50), accion)
                     if self.documento.pagina > 0:
                         v.boton("Anterior", (20, 540, 165, 52), "doc_anterior")
