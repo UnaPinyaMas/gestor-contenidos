@@ -67,9 +67,9 @@ sudo sh deploy/instalar.sh
 
 El instalador está preparado para el usuario `joviat` y esa ruta. El servicio ocupa
 la consola virtual 8 y deja la consola 1 disponible. Inicia la aplicación sin
-contraseña ni escritorio, y la reinicia si se cierra o falla. Salir desde el menú
-principal vuelve a abrir TerraHub. `systemctl stop terrahub` la detiene para
-mantenimiento sin reinicio automático.
+contraseña ni escritorio, y la reinicia si falla. Salir desde el menú principal
+cierra TerraHub y devuelve la consola 1; se abrirá de nuevo en el siguiente
+arranque. `systemctl start terrahub` permite iniciarla manualmente.
 
 ```bash
 sudo systemctl status terrahub
