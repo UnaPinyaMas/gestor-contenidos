@@ -12,6 +12,7 @@ class LectorDocumento:
         self.doc = None
         self.size = size
         self.pagina = 0
+        self.capitulo = 0
         self.zoom = 1.0
         self.x = self.y = 0.0
         try:
@@ -20,14 +21,27 @@ class LectorDocumento:
                 raise ValueError('Este documento requiere una contraseña.')
             if self.doc.is_reflowable:
                 self.doc.layout(width=size[0], height=size[1], fontsize=22)
-            if not self.doc.page_count:
+            self.total = (self.doc.chapter_page_count(0) if self.doc.is_reflowable
+                          else self.doc.page_count)
+            if not self.total:
                 raise ValueError('El documento no contiene páginas.')
-            self.total = self.doc.page_count
         except Exception:
             self.close()
             raise
 
     def mover_pagina(self, paso):
+        if self.doc.is_reflowable:
+            nueva = self.pagina + paso
+            if nueva >= self.total and self.capitulo + 1 < self.doc.chapter_count:
+                self.capitulo += 1
+                self.total = self.doc.chapter_page_count(self.capitulo)
+                nueva = 0
+            elif nueva < 0 and self.capitulo > 0:
+                self.capitulo -= 1
+                self.total = self.doc.chapter_page_count(self.capitulo)
+                nueva = self.total - 1
+            self.pagina = max(0, min(self.total - 1, nueva))
+            return
         self.pagina = max(0, min(self.total - 1, self.pagina + paso))
         self.x = self.y = 0
 
@@ -36,10 +50,21 @@ class LectorDocumento:
         if zoom == self.zoom:
             return
         if self.doc.is_reflowable:
-            bookmark = self.doc.make_bookmark(self.doc.location_from_page_number(self.pagina))
+            # Buscar el inicio visible solo en este capítulo evita que MuPDF
+            # repagine todos los capítulos anteriores al resolver un bookmark.
+            texto = self.doc.load_page((self.capitulo, self.pagina)).get_text()
+            ancla = ' '.join(texto.split()[:5])
+            proporcion = self.pagina / max(1, self.total)
             self.doc.layout(width=self.size[0], height=self.size[1], fontsize=22 * zoom)
-            self.total = self.doc.page_count
-            self.pagina = self.doc.page_number_from_location(self.doc.find_bookmark(bookmark))
+            self.total = self.doc.chapter_page_count(self.capitulo)
+            self.pagina = min(self.total - 1, round(proporcion * self.total))
+            if ancla:
+                candidatos = sorted(range(self.total), key=lambda n: abs(n - self.pagina))
+                for numero in candidatos:
+                    texto = self.doc.load_page((self.capitulo, numero)).get_text()
+                    if ancla in ' '.join(texto.split()):
+                        self.pagina = numero
+                        break
             self.x = self.y = 0
         self.zoom = zoom
 
@@ -50,7 +75,8 @@ class LectorDocumento:
         self.y += dy
 
     def render(self):
-        page = self.doc.load_page(self.pagina)
+        ubicacion = (self.capitulo, self.pagina) if self.doc.is_reflowable else self.pagina
+        page = self.doc.load_page(ubicacion)
         rect = page.rect
         w, h = self.size
         scale = min(w / rect.width, h / rect.height)

@@ -189,7 +189,8 @@ class Menu:
                 elif accion == "doc_siguiente":
                     self.documento.mover_pagina(1)
                 elif accion in ("doc_mas", "doc_menos"):
-                    self.documento.ampliar(.5 if accion == "doc_mas" else -.5)
+                    paso = 2 / 22 if self.documento.doc.is_reflowable else .5
+                    self.documento.ampliar(paso if accion == "doc_mas" else -paso)
                 else:
                     dx, dy = {"doc_izq": (-90, 0), "doc_der": (90, 0),
                               "doc_arriba": (0, -90), "doc_abajo": (0, 90)}[accion]
@@ -275,10 +276,15 @@ class Menu:
                         controles = [("Letra -", "doc_menos"), ("Letra +", "doc_mas")]
                     for i, (label, accion) in enumerate(controles):
                         v.boton(label, (20 + i * 128, 480, 120, 50), accion)
-                    if self.documento.pagina > 0:
+                    if self.documento.pagina > 0 or self.documento.capitulo > 0:
                         v.boton("Anterior", (20, 540, 165, 52), "doc_anterior")
-                    v.texto(f"{self.documento.pagina + 1} / {self.documento.total}", (400, 566), 200)
-                    if self.documento.pagina + 1 < self.documento.total:
+                    indicador = f"{self.documento.pagina + 1} / {self.documento.total}"
+                    if self.documento.doc.is_reflowable:
+                        indicador = f"Cap. {self.documento.capitulo + 1} · " + indicador
+                    v.texto(indicador, (400, 566), 270)
+                    if (self.documento.pagina + 1 < self.documento.total or
+                            (self.documento.doc.is_reflowable and
+                             self.documento.capitulo + 1 < self.documento.doc.chapter_count)):
                         v.boton("Siguiente", (615, 540, 165, 52), "doc_siguiente")
                 elif self.foto:
                     v.lienzo.blit(self.foto, self.foto.get_rect(center=(400, 310)))

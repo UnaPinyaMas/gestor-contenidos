@@ -35,8 +35,9 @@ class ContenidosTest(unittest.TestCase):
 <rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>''')
             z.writestr('book.opf', '''<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">test</dc:identifier><dc:title>Prueba</dc:title><dc:language>es</dc:language></metadata>
-<manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>''')
+<manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="second" href="second.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/><itemref idref="second"/></spine></package>''')
             z.writestr('chapter.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Prueba</title></head><body>' + '<p>Lectura de prueba con varias páginas.</p>' * 80 + '</body></html>')
+            z.writestr('second.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Segundo capítulo.</p></body></html>')
         self.m = menu.Menu()
         self.m.raiz = self.m.carpeta = self.root
         self.m.estado = 'carpeta'
@@ -87,6 +88,7 @@ class ContenidosTest(unittest.TestCase):
         lector.mover_pagina(3)
         bookmark = lector.doc.make_bookmark(lector.doc.location_from_page_number(lector.pagina))
         self.m.accion('doc_mas')
+        self.assertAlmostEqual(lector.zoom * 22, 24)
         self.assertGreater(lector.total, total)
         self.assertEqual(lector.pagina, lector.doc.page_number_from_location(lector.doc.find_bookmark(bookmark)))
         page = lector.doc.load_page(lector.pagina)
@@ -104,6 +106,19 @@ class ContenidosTest(unittest.TestCase):
         self.assertNotIn('doc_der', acciones)
         self.m.accion('doc_menos')
         self.assertEqual(lector.total, total)
+
+    def test_epub_cambia_capitulo_y_conserva_posicion(self):
+        self.m.abrir(self.epub)
+        lector = self.m.documento
+        lector.pagina = lector.total - 1
+        self.m.accion('doc_siguiente')
+        self.assertEqual((lector.capitulo, lector.pagina), (1, 0))
+        self.m.accion('doc_mas')
+        self.assertEqual(lector.capitulo, 1)
+        self.assertIn('Segundo', lector.doc.load_page((lector.capitulo, lector.pagina)).get_text())
+        self.m.accion('doc_anterior')
+        self.assertEqual(lector.capitulo, 0)
+        self.assertEqual(lector.pagina, lector.total - 1)
         self.assertTrue(self.m.ejecutando)
 
     def test_pdf_protegido(self):
