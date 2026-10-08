@@ -56,6 +56,7 @@ class VideoPlayer:
         self.error = ""
         self.warmup = False
         self.reset_inicio = False
+        self.reset_evento = 21 if video else 8
 
         self.changed = threading.Event()
 
@@ -436,8 +437,10 @@ class VideoPlayer:
 
             # Al cambiar de la preparación HDMI al contenido, vaciar la
             # cola de audio como hace un seek manual, pero desde el segundo 0.
-            # FILE_LOADED llega después de END_FILE de la preparación.
-            elif event.id == 8 and self.reset_inicio and not self.warmup:
+            # En vídeo esperar PLAYBACK_RESTART: FILE_LOADED todavía no
+            # garantiza que la sincronización inicial de imagen/audio termine.
+            # En audio basta FILE_LOADED. Solo se hace una vez por apertura.
+            elif event.id == self.reset_evento and self.reset_inicio and not self.warmup:
                 self.reset_inicio = False
                 self.command('seek', '0', 'absolute+exact')
 
