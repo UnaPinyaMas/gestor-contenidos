@@ -37,14 +37,14 @@ class VideoPlayer:
     @staticmethod
     def silencio_inicial():
         """Activa el enlace HDMI antes de enviar el contenido real."""
-        path = Path(__file__).resolve().parent / '.cache' / 'audio' / 'silencio.wav'
+        path = Path(__file__).resolve().parent / '.cache' / 'audio' / 'silencio-500ms.wav'
         if not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
             with wave.open(str(path), 'wb') as output:
                 output.setnchannels(2)
                 output.setsampwidth(2)
                 output.setframerate(48000)
-                output.writeframes(b'\x00\x00\x00\x00' * (48000 * 3))
+                output.writeframes(b'\x00\x00\x00\x00' * 24000)
         return path
 
     def __init__(self, path, audio=True, video=True):
@@ -55,6 +55,7 @@ class VideoPlayer:
         self.ended = False
         self.error = ""
         self.warmup = False
+        self.reset_inicio = False
 
         self.changed = threading.Event()
 
@@ -196,6 +197,7 @@ class VideoPlayer:
                 dispositivo = dispositivo_audio()
                 options["audio-device"] = "alsa/" + dispositivo
                 self.warmup = 'vc4hdmi' in dispositivo
+                self.reset_inicio = self.warmup
                 if self.warmup:
                     options["gapless-audio"] = "yes"
                     options["audio-samplerate"] = "48000"
@@ -431,6 +433,13 @@ class VideoPlayer:
                     self.error = (
                         "No se pudo reproducir este contenido."
                     )
+
+            # Al cambiar de la preparación HDMI al contenido, vaciar la
+            # cola de audio como hace un seek manual, pero desde el segundo 0.
+            # FILE_LOADED llega después de END_FILE de la preparación.
+            elif event.id == 8 and self.reset_inicio and not self.warmup:
+                self.reset_inicio = False
+                self.command('seek', '0', 'absolute+exact')
 
             # MPV_EVENT_START_FILE / error
             elif event.id == 5 and event.error < 0:

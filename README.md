@@ -110,8 +110,9 @@ soporte de sonido. Conecta los altavoces al jack de esa pantalla. Para forzar el
 jack de la Raspberry, establece `TERRAHUB_AUDIO_DEVICE=plughw:CARD=Headphones,DEV=0`
 en el entorno de la aplicación (o mediante un override de systemd). Sin pantalla
 HDMI con audio se usa la salida ALSA predeterminada.
-Antes de cada audio o vídeo, mpv reproduce tres segundos de silencio en la misma
-sesión. Así la pantalla activa su salida HDMI antes de recibir el contenido real.
+Antes de cada audio o vídeo por HDMI, mpv reproduce medio segundo de silencio
+en la misma sesión y reinicia la lectura del contenido desde el segundo cero.
+Esto prepara la salida y evita tener que pulsar el botón de avance para oírlo.
 
 ## Verificación
 

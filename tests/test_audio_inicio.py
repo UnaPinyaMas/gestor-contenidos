@@ -6,6 +6,7 @@ from pathlib import Path
 import time
 import unittest
 import wave
+from unittest.mock import patch
 import pygame
 from video_player import VideoPlayer
 
@@ -25,13 +26,16 @@ class AudioInicioTest(unittest.TestCase):
                 start = time.monotonic()
                 player = VideoPlayer(path, video=False)
                 try:
-                    deadline = start + 12
-                    while time.monotonic() < deadline and not player.ended:
-                        player.update()
-                        time.sleep(.02)
+                    with patch.object(player, 'command', wraps=player.command) as commands:
+                        deadline = start + 12
+                        while time.monotonic() < deadline and not player.ended:
+                            player.update()
+                            time.sleep(.02)
+                        commands.assert_called_once_with('seek', '0', 'absolute+exact')
                     self.assertTrue(player.ended)
                     self.assertFalse(player.error)
-                    self.assertGreaterEqual(time.monotonic() - start, 3.7)
+                    self.assertGreaterEqual(time.monotonic() - start, 1.2)
+                    self.assertLess(time.monotonic() - start, 3.5)
                 finally:
                     player.close()
         finally:
