@@ -31,9 +31,7 @@ y se permanece en TerraHub. Los formatos multimedia dependen de los códecs de m
 | EPUB | `recursos/epub/` |
 | Juegos | `recursos/juegos/` |
 | Fotos | `recursos/imagenes/` |
-| Archivos | `recursos/archivos/` |
 
-Se pueden abrir también PDF, EPUB, imágenes y archivos multimedia desde Archivos.
 Hay cinco entradas por página, navegación por subcarpetas y Actualizar. Los enlaces
 que salen de la carpeta de una sección se rechazan. Los contenidos nuevos se
 excluyen de Git; los recursos ya versionados permanecen.

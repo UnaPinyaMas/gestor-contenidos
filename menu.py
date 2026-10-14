@@ -9,7 +9,7 @@ ANCHO, ALTO = 800, 600
 BASE = Path(__file__).resolve().parent
 RECURSOS = BASE / "recursos"
 CARPETAS = {"Videos": "videos", "Audio": "audio", "PDF": "pdf",
-            "EPUB": "epub", "Juegos": "juegos", "Fotos": "imagenes", "Archivos": "archivos"}
+            "EPUB": "epub", "Juegos": "juegos", "Fotos": "imagenes"}
 VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
 AUDIO_EXT = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus", ".wma"}
 FOTO_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -228,9 +228,12 @@ class Menu:
         if self.estado == "menu":
             v.boton("Salir", (16, 16, 112, 56), "salir", ROJO)
             v.texto("TerraHub", (400, 48))
+            # Rejilla de 3 columnas centrada en la pantalla.
+            filas = (len(CARPETAS) + 2) // 3
+            arriba = (ALTO - (filas * 145 - 30)) // 2
             for i, nombre in enumerate(CARPETAS):
                 fila, columna = divmod(i, 3)
-                v.boton(nombre, (35 + columna * 255, 125 + fila * 145, 220, 115),
+                v.boton(nombre, (35 + columna * 255, arriba + fila * 145, 220, 115),
                         nombre, VERDE if i % 2 == 0 else AZUL)
         else:
             v.boton("Volver", (16, 16, 120, 56), "volver")
