@@ -168,6 +168,42 @@ class ContenidosTest(unittest.TestCase):
             self.m.dibujar()
         self.assertIsNone(self.m.vista.posicion(pygame.event.Event(pygame.FINGERDOWN, x=0, y=.5)))
 
+    def test_menu_de_energia(self):
+        self.m.estado = 'menu'
+        w, h = self.m.vista.pantalla.get_size()
+
+        def tocar_en(punto):
+            for tipo in (pygame.FINGERDOWN, pygame.FINGERUP):
+                self.m.evento(pygame.event.Event(tipo, x=punto[0] / w, y=punto[1] / h, finger_id=1))
+            self.m.dibujar()
+
+        def centro(accion):
+            return next(r for r, a in self.m.vista.botones if a == accion).center
+
+        self.m.dibujar()
+        tocar_en(centro('energia'))
+        self.assertTrue(self.m.energia_abierta)
+        acciones = [a for _, a in self.m.vista.botones]
+        self.assertNotIn('carrusel_der', acciones)     # el carrusel no responde debajo
+        self.assertIn('reiniciar', acciones)
+        # Apagar llama a systemctl; si falta el permiso se avisa y TerraHub sigue.
+        with patch.object(menu, 'ejecutar_energia', return_value=False) as energia:
+            tocar_en(centro('apagar'))
+        energia.assert_called_once_with('poweroff')
+        self.assertIn('permiso', self.m.aviso_inicio)
+        self.assertTrue(self.m.ejecutando)
+        # Suspender: pantalla en negro; el toque que despierta no activa nada.
+        tocar_en(centro('energia'))
+        tocar_en(centro('suspender'))
+        self.assertEqual(self.m.estado, 'reposo')
+        tocar_en((w // 2, h // 2))
+        self.assertEqual(self.m.estado, 'menu')
+        self.assertFalse(self.m.energia_abierta)
+        # Tocar fuera de la tarjeta la cierra.
+        tocar_en(centro('energia'))
+        tocar_en((w // 2, h - 5))
+        self.assertFalse(self.m.energia_abierta)
+
     def test_enlace_fuera_de_seccion(self):
         section = self.root / 'seccion'
         section.mkdir()

@@ -17,6 +17,10 @@ test -f /home/joviat/.config/retroarch/cores/gearboy_libretro.so || {
 }
 install -m 644 "$BASE/deploy/terrahub.service" /etc/systemd/system/terrahub.service
 install -m 644 "$BASE/deploy/99-terrahub-touch.rules" /etc/udev/rules.d/99-terrahub-touch.rules
+# Menú de energía: apagar/reiniciar sin contraseña. Se valida antes de instalar,
+# porque un archivo incorrecto en sudoers.d dejaría sudo inutilizable.
+visudo -cf "$BASE/deploy/terrahub.sudoers"
+install -m 440 "$BASE/deploy/terrahub.sudoers" /etc/sudoers.d/terrahub
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=input --action=change
 systemctl daemon-reload

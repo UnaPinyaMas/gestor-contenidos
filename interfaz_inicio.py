@@ -173,6 +173,41 @@ def aviso(sup, texto, fuente, y):
     sup.blit(t, t.get_rect(center=caja.center))
 
 
+# Frame '2 Menú de energía': tarjeta sobre el carrusel con tres botones.
+TARJETA_ENERGIA = pygame.Rect(330, 170, 620, 360)
+BOTONES_ENERGIA = [   # (acción, etiqueta, svg, x del botón); botones de 170x280 en y=210
+    ("apagar", "Apagar", "energia-apagar.svg", 365),
+    ("reiniciar", "Reiniciar", "energia-reiniciar.svg", 555),
+    ("suspender", "Suspender", "energia-suspender.svg", 745),
+]
+GRIS_BOTON = (240, 240, 240)          # #f0f0f0
+
+
+class PanelEnergia:
+    """Tarjeta del menú de energía, escalada a la pantalla."""
+    def __init__(self, esc):
+        self.esc = esc
+        self.iconos = [cargar_svg(svg, esc.k) for _, _, svg, _ in BOTONES_ENERGIA]
+        self.fuente = pygame.font.Font(None, esc.n(32))
+
+    def dibujar(self, sup, zona):
+        e = self.esc
+        radio = max(2, e.n(8))
+        tarjeta = e.r(TARJETA_ENERGIA)
+        pygame.draw.rect(sup, (255, 255, 255), tarjeta, border_radius=radio)
+        pygame.draw.rect(sup, TEXTO, tarjeta, e.n(4), border_radius=radio)
+        for (accion, etiqueta, _, x), icono in zip(BOTONES_ENERGIA, self.iconos):
+            boton = e.r(pygame.Rect(x, 210, 170, 280))
+            pygame.draw.rect(sup, GRIS_BOTON, boton, border_radius=radio)
+            pygame.draw.rect(sup, TEXTO, boton, e.n(2), border_radius=radio)
+            sup.blit(icono, e.p((x + 45, 260)))
+            texto = self.fuente.render(etiqueta, True, TEXTO)
+            sup.blit(texto, texto.get_rect(center=e.p((x + 85, 405))))
+            zona(boton, accion)
+        # Tocar fuera de la tarjeta (o el botón de energía otra vez) la cierra.
+        zona(sup.get_rect(), "cerrar_energia")
+
+
 class PantallaInicio:
     """Recursos ya escalados a la pantalla; se crean una vez por Vista."""
     def __init__(self, tam):
@@ -183,6 +218,7 @@ class PantallaInicio:
         self.ajustes = Burbuja("burbuja-ajustes.svg", e.n(AJUSTES[1]))
         self.izq = Control("flecha-izquierda.svg", e.n(LADO_FLECHA))
         self.der = Control("flecha-derecha.svg", e.n(LADO_FLECHA))
+        self.energia_panel = PanelEnergia(e)
         self.fuente = pygame.font.Font(None, e.n(44))
         self.fuente_aviso = pygame.font.Font(None, e.n(34))
         try:
@@ -190,11 +226,20 @@ class PantallaInicio:
         except (OSError, pygame.error):
             self.logo = None
 
-    def dibujar(self, sup, posicion, zona, aviso_texto=""):
+    def dibujar(self, sup, posicion, zona, aviso_texto="", energia=False):
         """Pinta la pantalla. 'posicion' es el índice (decimal) del carrusel en el centro.
 
-        'zona(rect, accion)' registra las zonas táctiles.
+        'zona(rect, accion)' registra las zonas táctiles. Con 'energia' se muestra
+        encima la tarjeta del menú de energía y solo ella responde a los toques.
         """
+        zona_carrusel = (lambda rect, accion: None) if energia else zona
+        self._dibujar_inicio(sup, posicion, zona_carrusel, zona, energia)
+        if energia:
+            self.energia_panel.dibujar(sup, zona)
+        if aviso_texto:
+            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - self.esc.n(70))
+
+    def _dibujar_inicio(self, sup, posicion, zona, zona_energia, energia):
         e = self.esc
         sup.fill((255, 255, 255))
         n = len(SECCIONES)
@@ -238,13 +283,12 @@ class PantallaInicio:
              "carrusel_izq")
         zona(pygame.Rect(0, 0, lado, lado).move(e.p(FLECHA_DER)[0] - lado // 2, e.p(FLECHA_DER)[1] - lado // 2),
              "carrusel_der")
-        # Energía, ajustes y logo.
-        for burbuja, (centro, diam), accion in ((self.energia, ENERGIA, "salir"),
-                                                (self.ajustes, AJUSTES, "ajustes")):
+        # Energía (abre/cierra el menú de energía), ajustes y logo.
+        for burbuja, (centro, diam), accion, registrar in (
+                (self.energia, ENERGIA, "cerrar_energia" if energia else "energia", zona_energia),
+                (self.ajustes, AJUSTES, "ajustes", zona)):
             p = e.p(centro)
             burbuja.dibujar(sup, p)
             r = e.n(diam) // 2 + e.n(16)
-            zona(pygame.Rect(p[0] - r, p[1] - r, 2 * r, 2 * r), accion)
+            registrar(pygame.Rect(p[0] - r, p[1] - r, 2 * r, 2 * r), accion)
         caja_logo(sup, e.r(LOGO), self.logo, self.fuente, max(1, e.n(2)))
-        if aviso_texto:
-            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(70))

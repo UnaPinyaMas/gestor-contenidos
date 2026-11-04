@@ -1,0 +1,3 @@
+# Menú de energía de TerraHub: el servicio (usuario joviat, sin sesión de logind)
+# puede apagar y reiniciar la Raspberry sin contraseña. Solo estas dos órdenes.
+joviat ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot

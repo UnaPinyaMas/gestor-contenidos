@@ -1,5 +1,6 @@
 """Menu y explorador de carpetas de TerraHub."""
 from pathlib import Path
+import subprocess
 import pygame
 from video_player import VideoPlayer
 from juegos import ejecutar_juego
@@ -24,6 +25,23 @@ POR_PAGINA = 5
 CONTROLES_MS = 3500        # tiempo que siguen visibles los controles del vídeo
 MOVER = (pygame.MOUSEMOTION, pygame.FINGERMOTION)
 SOLTAR = (pygame.MOUSEBUTTONUP, pygame.FINGERUP)
+
+
+def ejecutar_energia(verbo):
+    """Apaga ('poweroff') o reinicia ('reboot') la Raspberry; True si se ha pedido bien.
+
+    El servicio no tiene sesión de usuario, así que logind pediría contraseña:
+    se usa sudo sin contraseña solo para estas órdenes (deploy/terrahub.sudoers).
+    """
+    try:
+        r = subprocess.run(["sudo", "-n", "/usr/bin/systemctl", verbo],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print("Energía:", error, flush=True)
+        return False
+    if r.returncode:
+        print("Energía:", r.stderr.strip(), flush=True)
+    return r.returncode == 0
 
 
 class Vista:
@@ -137,6 +155,21 @@ class Menu:
         self.toque = None           # (posición, acción) al pulsar en Inicio
         self.aviso_inicio = ""
         self.aviso_inicio_hasta = 0
+        self.energia_abierta = False  # menú de energía sobre el Inicio
+
+    def avisar_inicio(self, texto, ms=2500):
+        self.aviso_inicio = texto
+        self.aviso_inicio_hasta = pygame.time.get_ticks() + ms
+        self.sucio = True
+
+    def energia_sistema(self, verbo, texto):
+        """Muestra el aviso ya (la orden puede tardar) y pide apagar/reiniciar."""
+        self.energia_abierta = False
+        self.avisar_inicio(texto, 15000)
+        self.dibujar()
+        self.vista.presentar()
+        if not ejecutar_energia(verbo):
+            self.avisar_inicio("No se pudo: falta el permiso de deploy/instalar.sh", 4000)
 
     def girar(self, paso):
         self.carrusel_destino += paso
@@ -339,8 +372,18 @@ class Menu:
             self.girar(-1 if accion == "carrusel_izq" else 1)
         elif accion == "ajustes":
             # El carrusel de ajustes del wireframe todavía no está hecho.
-            self.aviso_inicio = "Ajustes: próximamente"
-            self.aviso_inicio_hasta = pygame.time.get_ticks() + 2000
+            self.avisar_inicio("Ajustes: próximamente", 2000)
+        elif accion in ("energia", "cerrar_energia"):
+            self.energia_abierta = accion == "energia"
+        elif accion == "apagar":
+            self.energia_sistema("poweroff", "Apagando...")
+        elif accion == "reiniciar":
+            self.energia_sistema("reboot", "Reiniciando...")
+        elif accion == "suspender":
+            # La Raspberry no admite suspensión (/sys/power/state vacío):
+            # reposo de TerraHub con la pantalla en negro hasta el siguiente toque.
+            self.energia_abierta = False
+            self.estado = "reposo"
         elif accion == "salir":
             self.ejecutando = False
         elif accion == "inicio":
@@ -459,11 +502,14 @@ class Menu:
         v = self.vista
         v.lienzo.fill(FONDO)
         v.botones = []
-        v.modo_completo = (self.estado == "menu" or
+        v.modo_completo = (self.estado in ("menu", "reposo") or
                            self.estado in ("video", "audio") and self.player is not None)
         if self.estado == "menu":
             # Pantalla de Inicio del wireframe, a la resolución real de la pantalla.
-            v.inicio.dibujar(v.completo, self.carrusel, v.zona, self.aviso_inicio)
+            v.inicio.dibujar(v.completo, self.carrusel, v.zona, self.aviso_inicio,
+                             energia=self.energia_abierta)
+        elif self.estado == "reposo":
+            v.completo.fill((0, 0, 0))
         elif v.modo_completo:
             self.dibujar_reproductor()
         else:
@@ -514,11 +560,26 @@ class Menu:
         self.sucio = False
 
     def evento(self, evento):
+        if self.estado == "reposo":
+            # Cualquier toque o tecla despierta, sin activar nada debajo.
+            if evento.type == pygame.QUIT:
+                self.accion("salir")
+            elif evento.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN):
+                self.estado = "menu"
+                self.toque = None
+                self.sucio = True
+            return
+        if self.estado == "menu" and self.energia_abierta and (
+                evento.type == pygame.KEYDOWN and evento.key == pygame.K_ESCAPE):
+            self.accion("cerrar_energia")
+            return
         if evento.type == pygame.QUIT:
             self.accion("salir" if self.estado == "menu" else "volver")
         elif evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_ESCAPE:
                 self.accion("salir" if self.estado == "menu" else "volver")
+            elif self.estado == "menu" and self.energia_abierta:
+                pass  # con el menú de energía abierto solo responden sus botones
             elif self.estado == "menu" and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
                 self.girar(-1 if evento.key == pygame.K_LEFT else 1)
             elif self.estado == "menu" and evento.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
@@ -565,7 +626,7 @@ class Menu:
             self.toque = None
             fin = self.vista.posicion(evento, SOLTAR)
             dx = fin[0] - x0 if fin else 0
-            if abs(dx) > 50:
+            if abs(dx) > 50 and not self.energia_abierta:
                 self.girar(1 if dx < 0 else -1)
             elif accion:
                 self.accion(accion)
