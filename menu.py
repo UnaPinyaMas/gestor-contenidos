@@ -4,6 +4,7 @@ import pygame
 from video_player import VideoPlayer
 from juegos import ejecutar_juego
 from documentos import LectorDocumento
+import interfaz_video as iv
 
 ANCHO, ALTO = 800, 600
 BASE = Path(__file__).resolve().parent
@@ -17,6 +18,9 @@ JUEGO_EXT = {".gb", ".gbc", ".sgb"}
 FONDO = (10, 15, 20)
 AZUL, VERDE, ROJO = (21, 101, 192), (46, 125, 50), (165, 55, 65)
 POR_PAGINA = 5
+CONTROLES_MS = 3500        # tiempo que siguen visibles los controles del vídeo
+MOVER = (pygame.MOUSEMOTION, pygame.FINGERMOTION)
+SOLTAR = (pygame.MOUSEBUTTONUP, pygame.FINGERUP)
 
 
 class Vista:
@@ -30,13 +34,25 @@ class Vista:
         self.area = pygame.Rect(0, 0, round(ANCHO * escala), round(ALTO * escala))
         self.area.center = self.pantalla.get_rect().center
         self.fuente = pygame.font.Font(None, 30)
+        self.fuente_peq = pygame.font.Font(None, 22)
+        # El reproductor dibuja a la resolución real de la pantalla, sin escalar,
+        # para que el vídeo la ocupe entera (el lienzo 800x600 deja franjas).
+        self.completo = pygame.Surface((w, h)).convert()
+        self.modo_completo = False
+        self.degradado_sup = iv.degradado(w, 110, hacia_abajo=False)
+        self.degradado_inf = iv.degradado(w, 170, hacia_abajo=True)
         self.botones = []
 
-    def texto(self, texto, centro, ancho=750):
+    def texto(self, texto, centro, ancho=750, izquierda=False, sup=None):
         while self.fuente.size(texto)[0] > ancho and len(texto) > 4:
             texto = texto[:-4] + "..."
         imagen = self.fuente.render(texto, True, (255, 255, 255))
-        self.lienzo.blit(imagen, imagen.get_rect(center=centro))
+        rect = imagen.get_rect(midleft=centro) if izquierda else imagen.get_rect(center=centro)
+        (sup or self.lienzo).blit(imagen, rect)
+
+    def zona(self, rect, accion):
+        """Zona táctil sin dibujo (los iconos del reproductor se dibujan aparte)."""
+        self.botones.append((pygame.Rect(rect), accion))
 
     def boton(self, nombre, rect, accion, color=AZUL):
         rect = pygame.Rect(rect)
@@ -44,22 +60,32 @@ class Vista:
         self.texto(nombre, rect.center, rect.width - 20)
         self.botones.append((rect, accion))
 
-    def posicion(self, evento):
-        if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
-            if getattr(evento, "touch", False):
+    def posicion(self, evento, tipos=(pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN)):
+        """Posición en el lienzo de un toque/clic de los tipos indicados, o None."""
+        if evento.type not in tipos or getattr(evento, "touch", False):
+            return None
+        if evento.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+            if evento.button != 1:
                 return None
             pos = evento.pos
-        elif evento.type == pygame.FINGERDOWN:
+        elif evento.type == pygame.MOUSEMOTION:
+            if not evento.buttons[0]:
+                return None
+            pos = evento.pos
+        else:
             w, h = self.pantalla.get_size()
             pos = (evento.x * w, evento.y * h)
-        else:
-            return None
+        if self.modo_completo:
+            return pos
         if not self.area.collidepoint(pos):
             return None
         return ((pos[0] - self.area.x) * ANCHO / self.area.width,
                 (pos[1] - self.area.y) * ALTO / self.area.height)
 
     def preparar(self):
+        if self.modo_completo:
+            self.cache.blit(self.completo, (0, 0))
+            return
         self.cache.fill((0, 0, 0))
         pygame.transform.scale(self.lienzo, self.area.size, self.cache.subsurface(self.area))
 
@@ -86,6 +112,72 @@ class Menu:
         self.documento = None
         self.pagina_documento = None
         self.volumen = 70
+        self.silencio = False
+        self.posicion = 0.0
+        self.duracion = None
+        self.controles_hasta = 0
+        self.controles_dibujados = False
+        self.proxima_consulta = 0
+        self.arrastre = None        # (tipo, barra) mientras se desliza una barra
+        self.fraccion_arrastre = 0.0
+
+    def controles_visibles(self):
+        return (self.estado == "audio" or self.pausa or self.arrastre is not None or
+                pygame.time.get_ticks() < self.controles_hasta)
+
+    def arrastrar(self, pos):
+        """El dedo se mueve sobre una barra: el volumen cambia ya; el vídeo salta al soltar."""
+        tipo, barra = self.arrastre
+        self.fraccion_arrastre = max(0.0, min(1.0, (pos[0] - barra.x) / barra.width))
+        if tipo == "volumen":
+            self.accion(("volumen", self.fraccion_arrastre))
+        elif self.duracion:
+            self.posicion = self.fraccion_arrastre * self.duracion
+        self.mostrar_controles()
+
+    def soltar(self, pos):
+        if pos is not None:
+            self.arrastrar(pos)
+        tipo, _ = self.arrastre
+        self.arrastre = None
+        if tipo == "buscar":
+            self.accion(("buscar", self.fraccion_arrastre))
+        self.mostrar_controles()
+
+    def mostrar_controles(self):
+        self.controles_hasta = pygame.time.get_ticks() + CONTROLES_MS
+        self.sucio = True
+
+    def consultar_tiempo(self):
+        """Lee posición y duración de mpv como mucho 4 veces por segundo."""
+        ahora = pygame.time.get_ticks()
+        if ahora < self.proxima_consulta:
+            return
+        self.proxima_consulta = ahora + 250
+        if self.arrastre and self.arrastre[0] == "buscar":
+            return  # mientras se arrastra, la barra sigue al dedo y no a mpv
+        posicion = self.player.propiedad("time-pos")
+        duracion = self.player.propiedad("duration")
+        if posicion is not None and int(posicion) != int(self.posicion):
+            self.sucio = True
+        if duracion != self.duracion:
+            self.sucio = True
+        self.posicion = posicion if posicion is not None else self.posicion
+        self.duracion = duracion
+
+    def deslizar(self, tipo, fraccion):
+        """Toque en la barra de progreso (saltar) o en la de volumen."""
+        fraccion = max(0.0, min(1.0, fraccion))
+        if tipo == "buscar":
+            self.player.command("seek", f"{fraccion * 100:.2f}", "absolute-percent")
+            if self.duracion:
+                self.posicion = fraccion * self.duracion
+        elif tipo == "volumen":
+            self.volumen = round(fraccion * 20) * 5
+            self.silencio = False
+            self.player.command("set", "mute", "no")
+            self.player.command("set", "volume", str(self.volumen))
+        self.mostrar_controles()
 
     def actualizar(self):
         try:
@@ -114,6 +206,7 @@ class Menu:
                 return
 
     def cerrar_contenido(self):
+        self.arrastre = None
         if self.player:
             self.player.close()
             self.player = None
@@ -158,11 +251,15 @@ class Menu:
                 self.nombre = path.name
             elif path.suffix.lower() in VIDEO_EXT | AUDIO_EXT:
                 es_audio = path.suffix.lower() in AUDIO_EXT
-                self.player = VideoPlayer(path, video=not es_audio)
+                self.player = VideoPlayer(path, video=not es_audio,
+                                          size=self.vista.pantalla.get_size())
                 self.player.command("set", "volume", str(self.volumen))
                 self.estado = "audio" if es_audio else "video"
                 self.pausa = False
+                self.silencio = False
+                self.posicion, self.duracion = 0.0, None
                 self.nombre = path.name
+                self.mostrar_controles()
             elif path.suffix.lower() in FOTO_EXT:
                 foto = pygame.image.load(str(path)).convert()
                 w, h = foto.get_size()
@@ -194,7 +291,7 @@ class Menu:
         elif accion == "inicio":
             self.cerrar_contenido()
             self.estado = "menu"
-        elif accion.startswith("doc_") and self.documento:
+        elif isinstance(accion, str) and accion.startswith("doc_") and self.documento:
             try:
                 if accion == "doc_anterior":
                     self.documento.mover_pagina(-1)
@@ -219,13 +316,31 @@ class Menu:
             self.pagina = max(0, self.pagina - 1)
         elif accion == "siguiente":
             self.pagina = min(max(0, (len(self.archivos) - 1) // POR_PAGINA), self.pagina + 1)
-        elif accion in ("pausa", "retroceder", "adelantar", "vol_menos", "vol_mas") and self.player:
+        elif accion == "mostrar" and self.player:
+            self.mostrar_controles()
+        elif accion == "controles" and self.player:
+            # Tocar el vídeo muestra los controles; si ya se ven, los oculta.
+            if self.controles_visibles() and self.estado == "video" and not self.pausa:
+                self.controles_hasta = 0
+            else:
+                self.mostrar_controles()
+        elif (accion in ("pausa", "retroceder", "adelantar", "vol_menos", "vol_mas", "silenciar")
+              or isinstance(accion, tuple)) and self.player:
             try:
-                if accion == "pausa":
+                self.mostrar_controles()
+                if isinstance(accion, tuple):
+                    self.deslizar(*accion)
+                elif accion == "pausa":
                     self.player.command("cycle", "pause")
                     self.pausa = not self.pausa
                 elif accion in ("retroceder", "adelantar"):
                     self.player.command("seek", "-10" if accion == "retroceder" else "10", "relative")
+                    if self.duracion:
+                        paso = -10 if accion == "retroceder" else 10
+                        self.posicion = max(0, min(self.duracion, self.posicion + paso))
+                elif accion == "silenciar":
+                    self.silencio = not self.silencio
+                    self.player.command("set", "mute", "yes" if self.silencio else "no")
                 else:
                     self.volumen = max(0, min(100, self.volumen + (-10 if accion == "vol_menos" else 10)))
                     self.player.command("set", "volume", str(self.volumen))
@@ -233,11 +348,66 @@ class Menu:
                 self.volver()
                 self.aviso = "Error de reproducción: " + str(error)
 
+    def dibujar_reproductor(self):
+        """Vídeo/audio a pantalla completa con controles superpuestos (estilo YouTube)."""
+        v = self.vista
+        sup = v.completo                     # resolución real de la pantalla
+        w, h = sup.get_size()
+        sup.fill((0, 0, 0))
+        if self.estado == "video":
+            sup.blit(self.player.surface, self.player.surface.get_rect(center=(w // 2, h // 2)))
+        else:
+            iv.nota(sup, (w // 2, h // 2 - 50), 70)
+            v.texto(self.nombre, (w // 2, h // 2 + 60), w - 100, sup=sup)
+        self.controles_dibujados = self.controles_visibles()
+        if self.controles_dibujados:
+            sup.blit(v.degradado_sup, (0, 0))
+            sup.blit(v.degradado_inf, (0, h - v.degradado_inf.get_height()))
+            # Arriba: volver, título e inicio.
+            iv.atras(sup, (36, 36))
+            v.zona((0, 0, 72, 72), "volver")
+            v.texto(self.nombre, (76, 36), w - 160, izquierda=True, sup=sup)
+            iv.inicio(sup, (w - 36, 36))
+            v.zona((w - 72, 0, 72, 72), "inicio")
+            if self.estado == "video" and self.pausa:
+                iv.boton_central(sup, (w // 2, h // 2), en_pausa=True)
+                v.zona((w // 2 - 60, h // 2 - 60, 120, 120), "pausa")
+            # Barra de progreso: se toca o se arrastra; zona alta y de todo el ancho.
+            progreso = pygame.Rect(20, h - 66, w - 40, 5)
+            fraccion = self.posicion / self.duracion if self.duracion else 0
+            arrastrando = self.arrastre is not None and self.arrastre[0] == "buscar"
+            iv.barra(sup, progreso, fraccion, perilla=11 if arrastrando else 7)
+            v.zona((0, h - 98, w, 48), ("buscar", progreso))
+            # Fila inferior.
+            y = h - 26
+            (iv.play if self.pausa else iv.pausa)(sup, (40, y), 13)
+            v.zona((8, h - 50, 64, 50), "pausa")
+            iv.saltar(sup, (102, y), v.fuente_peq, adelante=False)
+            v.zona((72, h - 50, 60, 50), "retroceder")
+            iv.saltar(sup, (160, y), v.fuente_peq, adelante=True)
+            v.zona((132, h - 50, 58, 50), "adelantar")
+            iv.volumen(sup, (222, y), self.volumen, self.silencio)
+            v.zona((192, h - 50, 52, 50), "silenciar")
+            volumen = pygame.Rect(256, y - 2, 140, 4)
+            iv.barra(sup, volumen, 0 if self.silencio else self.volumen / 100,
+                     color=iv.BLANCO, perilla=11 if self.arrastre and self.arrastre[0] == "volumen" else 7)
+            v.zona((244, h - 50, 168, 50), ("volumen", volumen))
+            tiempo = f"{iv.formato_tiempo(self.posicion)} / {iv.formato_tiempo(self.duracion)}"
+            v.texto(tiempo, (424, y), 300, izquierda=True, sup=sup)
+            # Un toque que falla por poco en la franja de controles no los esconde.
+            v.zona((0, h - 98, w, 98), "mostrar")
+            v.zona((0, 0, w, 72), "mostrar")
+        # Toque en cualquier otro punto: mostrar u ocultar los controles.
+        v.zona(sup.get_rect(), "controles")
+
     def dibujar(self):
         v = self.vista
         v.lienzo.fill(FONDO)
         v.botones = []
-        if self.estado == "menu":
+        v.modo_completo = self.estado in ("video", "audio") and self.player is not None
+        if v.modo_completo:
+            self.dibujar_reproductor()
+        elif self.estado == "menu":
             v.boton("Salir", (16, 16, 112, 56), "salir", ROJO)
             v.texto("TerraHub", (400, 48))
             # Rejilla de 3 columnas centrada en la pantalla.
@@ -269,19 +439,7 @@ class Menu:
                     v.boton("Siguiente", (606, 526, 170, 56), "siguiente")
             else:
                 v.texto(self.nombre, (535, 44), 480)
-                if self.estado == "video" and self.player:
-                    v.lienzo.blit(self.player.surface, (0, 80))
-                elif self.estado == "audio":
-                    v.texto("Reproducción de audio", (400, 230))
-                    v.texto("En pausa" if self.pausa else "Reproduciendo", (400, 300))
-                if self.estado in ("video", "audio") and self.player:
-                    v.boton("-10 s", (16, 536, 110, 56), "retroceder")
-                    v.boton("Continuar" if self.pausa else "Pausar", (138, 536, 170, 56), "pausa")
-                    v.boton("+10 s", (320, 536, 110, 56), "adelantar")
-                    v.boton("Vol -", (450, 536, 100, 56), "vol_menos")
-                    v.texto(str(self.volumen) + "%", (605, 564), 90)
-                    v.boton("Vol +", (660, 536, 120, 56), "vol_mas")
-                elif self.estado == "documento" and self.documento:
+                if self.estado == "documento" and self.documento:
                     v.lienzo.blit(self.pagina_documento, (20, 82))
                     controles = [
                         ("Zoom -", "doc_menos"), ("Zoom +", "doc_mas"),
@@ -316,12 +474,28 @@ class Menu:
                 self.accion("doc_anterior" if evento.key == pygame.K_LEFT else "doc_siguiente")
             elif evento.key == pygame.K_SPACE and self.player:
                 self.accion("pausa")
+            elif self.player and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                self.accion("retroceder" if evento.key == pygame.K_LEFT else "adelantar")
+            elif self.player and evento.key == pygame.K_m:
+                self.accion("silenciar")
+        elif self.arrastre:
+            if evento.type in MOVER:
+                pos = self.vista.posicion(evento, MOVER)
+                if pos is not None:
+                    self.arrastrar(pos)
+            elif evento.type in SOLTAR:
+                self.soltar(self.vista.posicion(evento, SOLTAR))
         else:
             pos = self.vista.posicion(evento)
             if pos is not None:
                 for rect, accion in self.vista.botones:
                     if rect.collidepoint(pos):
-                        self.accion(accion)
+                        if isinstance(accion, tuple):
+                            # Barra deslizante: sigue al dedo hasta que se suelta.
+                            self.arrastre = accion
+                            self.arrastrar(pos)
+                        else:
+                            self.accion(accion)
                         break
 
     def run(self):
@@ -349,10 +523,13 @@ class Menu:
                             aviso = self.player.error
                             self.volver()
                             self.aviso = aviso
-                        elif nuevo and self.estado == "video":
-                            self.vista.lienzo.blit(self.player.surface, (0, 80))
-                            self.vista.preparar()
-                            presentar = True
+                        else:
+                            self.consultar_tiempo()
+                            # Cada fotograma nuevo se pinta con los controles encima,
+                            # y al caducar el tiempo de los controles se ocultan.
+                            if (nuevo and self.estado == "video" or
+                                    self.controles_visibles() != self.controles_dibujados):
+                                self.sucio = True
                     except RuntimeError as error:
                         print("Error de reproduccion:", error, flush=True)
                         self.volver()

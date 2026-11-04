@@ -47,7 +47,7 @@ class VideoPlayer:
                 output.writeframes(b'\x00\x00\x00\x00' * 24000)
         return path
 
-    def __init__(self, path, audio=True, video=True):
+    def __init__(self, path, audio=True, video=True, size=(800, 450)):
 
         self.handle = None
         self.context = C.c_void_p()
@@ -90,6 +90,17 @@ class VideoPlayer:
                         C.c_void_p,
                         C.c_uint64,
                         C.POINTER(C.c_char_p)
+                    ]
+                ),
+
+            "mpv_get_property":
+                (
+                    C.c_int,
+                    [
+                        C.c_void_p,
+                        C.c_char_p,
+                        C.c_int,
+                        C.c_void_p
                     ]
                 ),
 
@@ -265,14 +276,17 @@ class VideoPlayer:
                 None
             )
 
-            # Resolución interna del vídeo.
-            # 800x450 mantiene una proporción 16:9.
+            # Resolución interna del vídeo. Por defecto 800x450 (16:9);
+            # el reproductor pide el tamaño de la pantalla y mpv añade
+            # las franjas negras necesarias para conservar la proporción.
+            ancho, alto = size
+
             self.size = (
                 C.c_int * 2
-            )(800, 450)
+            )(ancho, alto)
 
             self.stride = C.c_size_t(
-                800 * 4
+                ancho * 4
             )
 
             self.format = C.create_string_buffer(
@@ -281,13 +295,13 @@ class VideoPlayer:
 
             self.pixels = (
                 C.c_ubyte * (
-                    800 * 450 * 4
+                    ancho * alto * 4
                 )
             )()
 
             self.surface = pygame.image.frombuffer(
                 self.pixels,
-                (800, 450),
+                (ancho, alto),
                 "RGBX"
             )
 
@@ -377,6 +391,19 @@ class VideoPlayer:
                 values
             )
         )
+
+    def propiedad(self, nombre):
+        """Lee una propiedad numérica de mpv ('time-pos', 'duration'...).
+
+        Devuelve None si aún no existe o mientras suena el silencio de preparación HDMI.
+        """
+        if not self.handle or self.warmup:
+            return None
+        valor = C.c_double()
+        # 5 = MPV_FORMAT_DOUBLE
+        if self.lib.mpv_get_property(self.handle, nombre.encode(), 5, C.byref(valor)) < 0:
+            return None
+        return valor.value
 
     def update(self):
 

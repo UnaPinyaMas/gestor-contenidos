@@ -21,6 +21,9 @@ def main(argv=None):
     try:
         pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         pygame.display.set_caption("TerraHub")
+        # La pantalla táctil también se anuncia como ratón (regla udev de RetroArch):
+        # ocultar el cursor que SDL dibujaría en la esquina.
+        pygame.mouse.set_visible(False)
         if args.carpeta or inicio.mostrar_inicio():
             menu.mostrar_menu(args.carpeta, args.aviso)
     finally:
