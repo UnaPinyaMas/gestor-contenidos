@@ -130,16 +130,42 @@ class ContenidosTest(unittest.TestCase):
         self.assertEqual(self.m.estado, 'carpeta')
         self.assertIn('contraseña', self.m.aviso)
 
-    def test_tactil_escalado_y_bordes(self):
+    def test_inicio_carrusel_y_toques(self):
         self.m.estado = 'menu'
+        w, h = self.m.vista.pantalla.get_size()
+
+        def dedo(tipo, x, y):
+            self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=1))
+
+        def tocar(accion):
+            self.m.dibujar()
+            rect = next(r for r, a in self.m.vista.botones if a == accion)
+            dedo(pygame.FINGERDOWN, *rect.center)
+            dedo(pygame.FINGERUP, *rect.center)
+            while self.m.animar_inicio():
+                pass
+
         self.m.dibujar()
-        rect, _ = next((r, a) for r, a in self.m.vista.botones if a == 'PDF')
-        area = self.m.vista.area
-        x = (area.x + rect.centerx * area.width / 800) / 800
-        y = (area.y + rect.centery * area.height / 600) / 480
+        self.assertTrue(self.m.vista.modo_completo)
+        self.assertEqual(self.m.seccion_central(), 'Vídeos')
+        # Pulsar un lateral mueve el carrusel (nota del wireframe).
+        tocar('carrusel_der')
+        self.assertEqual(self.m.seccion_central(), 'Libros')
+        # Deslizar el dedo hacia la derecha vuelve a Vídeos.
+        dedo(pygame.FINGERDOWN, 300, h // 2)
+        dedo(pygame.FINGERUP, 420, h // 2)
+        while self.m.animar_inicio():
+            pass
+        self.assertEqual(self.m.seccion_central(), 'Vídeos')
+        tocar('carrusel_der')
+        # Tocar la burbuja central abre la sección; Libros agrupa pdf y epub.
         with patch.object(menu, 'RECURSOS', self.root):
-            self.m.evento(pygame.event.Event(pygame.FINGERDOWN, x=x, y=y, finger_id=1))
-        self.assertEqual(self.m.categoria, 'PDF')
+            tocar('Libros')
+        self.assertEqual((self.m.estado, self.m.categoria), ('carpeta', 'Libros'))
+        self.assertEqual([p.name for p in self.m.archivos], ['pdf', 'epub'])
+        # Fuera del Inicio el lienzo 800x600 se escala: un toque en la franja lateral no cuenta.
+        with patch.object(menu, 'BASE', self.root):   # la ruta mostrada es relativa a BASE
+            self.m.dibujar()
         self.assertIsNone(self.m.vista.posicion(pygame.event.Event(pygame.FINGERDOWN, x=0, y=.5)))
 
     def test_enlace_fuera_de_seccion(self):

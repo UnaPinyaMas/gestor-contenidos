@@ -5,12 +5,15 @@ from video_player import VideoPlayer
 from juegos import ejecutar_juego
 from documentos import LectorDocumento
 import interfaz_video as iv
+import interfaz_inicio
 
 ANCHO, ALTO = 800, 600
 BASE = Path(__file__).resolve().parent
 RECURSOS = BASE / "recursos"
-CARPETAS = {"Videos": "videos", "Audio": "audio", "PDF": "pdf",
-            "EPUB": "epub", "Juegos": "juegos", "Fotos": "imagenes"}
+# Secciones del carrusel de Inicio. Libros agrupa dos carpetas, que se muestran
+# como subcarpetas al entrar.
+CARPETAS = {"Audio": "audio", "Vídeos": "videos", "Libros": ("pdf", "epub"),
+            "Imágenes": "imagenes", "Juegos": "juegos"}
 VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
 AUDIO_EXT = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus", ".wma"}
 FOTO_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -41,7 +44,15 @@ class Vista:
         self.modo_completo = False
         self.degradado_sup = iv.degradado(w, 110, hacia_abajo=False)
         self.degradado_inf = iv.degradado(w, 170, hacia_abajo=True)
+        self._inicio = None
         self.botones = []
+
+    @property
+    def inicio(self):
+        """Recursos de la pantalla de Inicio (SVG rasterizados), creados al usarse."""
+        if self._inicio is None:
+            self._inicio = interfaz_inicio.PantallaInicio(self.pantalla.get_size())
+        return self._inicio
 
     def texto(self, texto, centro, ancho=750, izquierda=False, sup=None):
         while self.fuente.size(texto)[0] > ancho and len(texto) > 4:
@@ -120,6 +131,33 @@ class Menu:
         self.proxima_consulta = 0
         self.arrastre = None        # (tipo, barra) mientras se desliza una barra
         self.fraccion_arrastre = 0.0
+        self.subcarpetas = None     # carpetas que agrupa la sección (Libros)
+        # Carrusel de Inicio: posición animada y destino (índice en SECCIONES).
+        self.carrusel = self.carrusel_destino = 1.0     # empieza en Vídeos
+        self.toque = None           # (posición, acción) al pulsar en Inicio
+        self.aviso_inicio = ""
+        self.aviso_inicio_hasta = 0
+
+    def girar(self, paso):
+        self.carrusel_destino += paso
+        self.sucio = True
+
+    def animar_inicio(self):
+        """Acerca el carrusel a su destino y caduca el aviso; True si hay que repintar."""
+        cambio = False
+        if self.carrusel != self.carrusel_destino:
+            self.carrusel += (self.carrusel_destino - self.carrusel) * .25
+            if abs(self.carrusel - self.carrusel_destino) < .01:
+                self.carrusel = self.carrusel_destino
+            cambio = True
+        if self.aviso_inicio and pygame.time.get_ticks() > self.aviso_inicio_hasta:
+            self.aviso_inicio = ""
+            cambio = True
+        return cambio
+
+    def seccion_central(self):
+        n = len(interfaz_inicio.SECCIONES)
+        return interfaz_inicio.SECCIONES[round(self.carrusel_destino) % n][1]
 
     def controles_visibles(self):
         return (self.estado == "audio" or self.pausa or self.arrastre is not None or
@@ -181,10 +219,16 @@ class Menu:
 
     def actualizar(self):
         try:
-            self.carpeta.mkdir(parents=True, exist_ok=True)
-            self.archivos = sorted(
-                (p for p in self.carpeta.iterdir() if not p.name.startswith(".")),
-                key=lambda p: (not p.is_dir(), p.name.casefold()))
+            if self.subcarpetas and self.carpeta == self.raiz:
+                # Sección que agrupa carpetas (Libros: pdf y epub): mostrar solo esas.
+                self.archivos = [self.raiz / s for s in self.subcarpetas]
+                for carpeta in self.archivos:
+                    carpeta.mkdir(parents=True, exist_ok=True)
+            else:
+                self.carpeta.mkdir(parents=True, exist_ok=True)
+                self.archivos = sorted(
+                    (p for p in self.carpeta.iterdir() if not p.name.startswith(".")),
+                    key=lambda p: (not p.is_dir(), p.name.casefold()))
             self.aviso = ""
         except OSError as error:
             self.archivos = []
@@ -196,14 +240,15 @@ class Menu:
     def abrir_carpeta(self, carpeta, aviso=""):
         """Abre una carpeta dentro de su sección, p. ej. al volver del emulador."""
         carpeta = Path(carpeta).resolve()
-        for nombre, sub in CARPETAS.items():
-            raiz = RECURSOS / sub
-            if carpeta.is_relative_to(raiz.resolve()):
-                self.accion(nombre)
-                self.carpeta = raiz / carpeta.relative_to(raiz.resolve())
-                self.actualizar()
-                self.aviso = aviso
-                return
+        for nombre, subs in CARPETAS.items():
+            for sub in (subs if isinstance(subs, tuple) else (subs,)):
+                raiz = RECURSOS / sub
+                if carpeta.is_relative_to(raiz.resolve()):
+                    self.accion(nombre)
+                    self.carpeta = raiz / carpeta.relative_to(raiz.resolve())
+                    self.actualizar()
+                    self.aviso = aviso
+                    return
 
     def cerrar_contenido(self):
         self.arrastre = None
@@ -232,7 +277,9 @@ class Menu:
 
     def abrir(self, path):
         try:
-            if not path.resolve().is_relative_to(self.raiz.resolve()):
+            raices = ([self.raiz / s for s in self.subcarpetas] if self.subcarpetas
+                      else [self.raiz])
+            if not any(path.resolve().is_relative_to(r.resolve()) for r in raices):
                 self.aviso = "Este enlace apunta fuera de la carpeta."
             elif path.is_dir():
                 self.carpeta = path
@@ -282,10 +329,18 @@ class Menu:
             self.abrir(accion)
         elif accion in CARPETAS:
             self.categoria = accion
-            self.raiz = self.carpeta = RECURSOS / CARPETAS[accion]
+            sub = CARPETAS[accion]
+            self.subcarpetas = sub if isinstance(sub, tuple) else None
+            self.raiz = self.carpeta = RECURSOS if self.subcarpetas else RECURSOS / sub
             self.pagina = 0
             self.estado = "carpeta"
             self.actualizar()
+        elif accion in ("carrusel_izq", "carrusel_der"):
+            self.girar(-1 if accion == "carrusel_izq" else 1)
+        elif accion == "ajustes":
+            # El carrusel de ajustes del wireframe todavía no está hecho.
+            self.aviso_inicio = "Ajustes: próximamente"
+            self.aviso_inicio_hasta = pygame.time.get_ticks() + 2000
         elif accion == "salir":
             self.ejecutando = False
         elif accion == "inicio":
@@ -404,19 +459,13 @@ class Menu:
         v = self.vista
         v.lienzo.fill(FONDO)
         v.botones = []
-        v.modo_completo = self.estado in ("video", "audio") and self.player is not None
-        if v.modo_completo:
+        v.modo_completo = (self.estado == "menu" or
+                           self.estado in ("video", "audio") and self.player is not None)
+        if self.estado == "menu":
+            # Pantalla de Inicio del wireframe, a la resolución real de la pantalla.
+            v.inicio.dibujar(v.completo, self.carrusel, v.zona, self.aviso_inicio)
+        elif v.modo_completo:
             self.dibujar_reproductor()
-        elif self.estado == "menu":
-            v.boton("Salir", (16, 16, 112, 56), "salir", ROJO)
-            v.texto("TerraHub", (400, 48))
-            # Rejilla de 3 columnas centrada en la pantalla.
-            filas = (len(CARPETAS) + 2) // 3
-            arriba = (ALTO - (filas * 145 - 30)) // 2
-            for i, nombre in enumerate(CARPETAS):
-                fila, columna = divmod(i, 3)
-                v.boton(nombre, (35 + columna * 255, arriba + fila * 145, 220, 115),
-                        nombre, VERDE if i % 2 == 0 else AZUL)
         else:
             v.boton("Volver", (16, 16, 120, 56), "volver")
             v.boton("Inicio", (148, 16, 112, 56), "inicio")
@@ -470,6 +519,11 @@ class Menu:
         elif evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_ESCAPE:
                 self.accion("salir" if self.estado == "menu" else "volver")
+            elif self.estado == "menu" and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                self.girar(-1 if evento.key == pygame.K_LEFT else 1)
+            elif self.estado == "menu" and evento.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
+                                                          pygame.K_SPACE):
+                self.accion(self.seccion_central())
             elif self.documento and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
                 self.accion("doc_anterior" if evento.key == pygame.K_LEFT else "doc_siguiente")
             elif evento.key == pygame.K_SPACE and self.player:
@@ -478,6 +532,8 @@ class Menu:
                 self.accion("retroceder" if evento.key == pygame.K_LEFT else "adelantar")
             elif self.player and evento.key == pygame.K_m:
                 self.accion("silenciar")
+        elif self.estado == "menu":
+            self.evento_inicio(evento)
         elif self.arrastre:
             if evento.type in MOVER:
                 pos = self.vista.posicion(evento, MOVER)
@@ -498,6 +554,22 @@ class Menu:
                             self.accion(accion)
                         break
 
+    def evento_inicio(self, evento):
+        """Inicio: un toque actúa al soltar; deslizar en horizontal gira el carrusel."""
+        pos = self.vista.posicion(evento)
+        if pos is not None:
+            accion = next((a for r, a in self.vista.botones if r.collidepoint(pos)), None)
+            self.toque = (pos, accion)
+        elif self.toque and evento.type in SOLTAR:
+            (x0, _), accion = self.toque
+            self.toque = None
+            fin = self.vista.posicion(evento, SOLTAR)
+            dx = fin[0] - x0 if fin else 0
+            if abs(dx) > 50:
+                self.girar(1 if dx < 0 else -1)
+            elif accion:
+                self.accion(accion)
+
     def run(self):
         reloj = pygame.time.Clock()
         self.dibujar()
@@ -516,6 +588,8 @@ class Menu:
                         presentar = True
                 if not self.ejecutando:
                     break
+                if self.estado == "menu" and self.animar_inicio():
+                    self.sucio = True
                 if self.player:
                     try:
                         nuevo = self.player.update()

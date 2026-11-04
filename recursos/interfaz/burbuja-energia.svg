@@ -1,0 +1,46 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="188" height="158" viewBox="0 0 188 158" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Burbuja/Energ&#195;&#173;a">
+<g id="base" filter="url(#filter0_d_0_16)">
+<circle cx="60" cy="52" r="42" fill="url(#paint0_linear_0_16)"/>
+<circle cx="60" cy="52" r="40.75" stroke="white" stroke-opacity="0.55" stroke-width="2.5"/>
+</g>
+<ellipse id="brillo inferior" cx="60" cy="81" rx="28" ry="8" fill="url(#paint1_linear_0_16)"/>
+<g id="glifo" filter="url(#filter1_d_0_16)">
+<path id="Vector" d="M60 38.875V52.6875" stroke-width="4.25" stroke-linecap="round" stroke-linejoin="round" stroke="white"/>
+<path id="Vector_2" d="M50.8333 44.5625C49.1799 46.3014 48.0826 48.4728 47.676 50.8107C47.2693 53.1485 47.571 55.5512 48.544 57.7244C49.517 59.8976 51.1191 61.7468 53.1539 63.0455C55.1888 64.3442 57.568 65.0359 60 65.0359C62.432 65.0359 64.8112 64.3442 66.8461 63.0455C68.8809 61.7468 70.483 59.8976 71.456 57.7244C72.429 55.5512 72.7307 53.1485 72.324 50.8107C71.9174 48.4728 70.8201 46.3014 69.1667 44.5625" stroke-width="4.25" stroke-linecap="round" stroke-linejoin="round" stroke="white"/>
+</g>
+<ellipse id="brillo superior" cx="60" cy="32.5" rx="33" ry="17.5" fill="url(#paint2_linear_0_16)"/>
+</g>
+<defs>
+<filter id="filter0_d_0_16" x="0" y="0" width="120" height="120" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="8"/>
+<feGaussianBlur stdDeviation="9"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0.05 0 0 0 0 0.12 0 0 0 0 0.25 0 0 0 0.3 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_16"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_0_16" result="shape"/>
+</filter>
+<filter id="filter1_d_0_16" x="38" y="33.5" width="44" height="43" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1.5"/>
+<feGaussianBlur stdDeviation="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.18 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_16"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_0_16" result="shape"/>
+</filter>
+<linearGradient id="paint0_linear_0_16" x1="60" y1="10" x2="60" y2="94" gradientUnits="userSpaceOnUse">
+<stop stop-color="#FF7A6B"/>
+<stop offset="1" stop-color="#C9302C"/>
+</linearGradient>
+<linearGradient id="paint1_linear_0_16" x1="60" y1="73" x2="60" y2="89" gradientUnits="userSpaceOnUse">
+<stop stop-color="white" stop-opacity="0"/>
+<stop offset="1" stop-color="white" stop-opacity="0.28"/>
+</linearGradient>
+<linearGradient id="paint2_linear_0_16" x1="60" y1="15" x2="60" y2="50" gradientUnits="userSpaceOnUse">
+<stop stop-color="white" stop-opacity="0.7"/>
+<stop offset="1" stop-color="white" stop-opacity="0"/>
+</linearGradient>
+</defs>
+</svg>
