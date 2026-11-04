@@ -101,6 +101,18 @@ class Menu:
         self.pagina = min(self.pagina, max(0, (len(self.archivos) - 1) // POR_PAGINA))
         self.sucio = True
 
+    def abrir_carpeta(self, carpeta, aviso=""):
+        """Abre una carpeta dentro de su sección, p. ej. al volver del emulador."""
+        carpeta = Path(carpeta).resolve()
+        for nombre, sub in CARPETAS.items():
+            raiz = RECURSOS / sub
+            if carpeta.is_relative_to(raiz.resolve()):
+                self.accion(nombre)
+                self.carpeta = raiz / carpeta.relative_to(raiz.resolve())
+                self.actualizar()
+                self.aviso = aviso
+                return
+
     def cerrar_contenido(self):
         if self.player:
             self.player.close()
@@ -355,5 +367,8 @@ class Menu:
             self.cerrar_contenido()
 
 
-def mostrar_menu():
-    Menu().run()
+def mostrar_menu(carpeta=None, aviso=""):
+    m = Menu()
+    if carpeta:
+        m.abrir_carpeta(carpeta, aviso)
+    m.run()

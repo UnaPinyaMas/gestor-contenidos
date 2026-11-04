@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import pygame
 from audio_config import dispositivo_audio
 
@@ -88,15 +89,39 @@ def ejecutar_juego(juego):
     surface = pygame.display.get_surface()
     size, flags = surface.get_size(), surface.get_flags()
     pygame.display.quit()
+    aviso = ''
     try:
         with log.open('w') as output:
             result = subprocess.run([executable, '--appendconfig', str(config),
                                      '-L', str(CORE), str(juego)],
                                     stdout=output, stderr=subprocess.STDOUT, check=False)
         if result.returncode:
-            raise RuntimeError(f'El emulador terminó con error. Consulta {log}')
-    finally:
-        pygame.display.init()
-        pygame.display.set_mode(size, flags)
-        pygame.display.set_caption('TerraHub')
-        pygame.event.clear()
+            aviso = f'El emulador terminó con error. Consulta {log}'
+    except OSError as error:
+        aviso = f'No se pudo iniciar el emulador: {error}'
+    try:
+        relanzar(juego.parent, aviso)
+    except OSError as error:
+        print('No se pudo relanzar TerraHub:', error, flush=True)
+    # Solo se llega aquí si exec falla (o en las pruebas): recuperar la pantalla.
+    pygame.display.init()
+    pygame.display.set_mode(size, flags)
+    pygame.display.set_caption('TerraHub')
+    pygame.event.clear()
+    if aviso:
+        raise RuntimeError(aviso)
+
+
+def relanzar(carpeta, aviso=''):
+    """Sustituye el proceso por un TerraHub nuevo abierto en la carpeta del juego.
+
+    Reiniciar el vídeo de SDL/KMSDRM dentro del mismo proceso deja la pantalla en
+    negro en la Raspberry (solo se ve el cursor). exec conserva el PID del servicio
+    y la consola tty8, y arranca la interfaz igual que al encender.
+    """
+    args = [sys.executable, str(BASE / 'main.py'), '--carpeta', str(carpeta)]
+    if aviso:
+        args += ['--aviso', aviso]
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, args)

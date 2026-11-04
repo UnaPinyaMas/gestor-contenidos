@@ -160,12 +160,27 @@ class ContenidosTest(unittest.TestCase):
                  patch.object(juegos.shutil, 'which', return_value='/usr/bin/retroarch'), \
                  patch.object(juegos, 'configurar_controles', return_value=(self.root/'config', self.root/'log')), \
                  patch.object(juegos.subprocess, 'run', side_effect=failure,
-                              return_value=subprocess.CompletedProcess([], 0)):
+                              return_value=subprocess.CompletedProcess([], 0)), \
+                 patch.object(juegos, 'relanzar') as relanzar:
                 self.m.abrir(rom)
+                # Tras el emulador se arranca un proceso nuevo en la carpeta del juego.
+                relanzar.assert_called_once()
+                self.assertEqual(relanzar.call_args.args[0], rom.parent)
+                self.assertEqual(bool(relanzar.call_args.args[1]), failure is not None)
+                # Si exec fallara, la pantalla se recupera en el mismo proceso.
                 self.assertIs(self.m.vista.pantalla, pygame.display.get_surface())
                 self.assertEqual(pygame.display.get_surface().get_size(), (800, 480))
                 self.assertTrue(self.m.ejecutando)
                 self.assertEqual(self.m.estado, 'carpeta')
+
+    def test_volver_del_emulador_abre_la_carpeta(self):
+        juegos_dir = menu.RECURSOS / 'juegos'
+        self.m.abrir_carpeta(juegos_dir, 'aviso de prueba')
+        self.assertEqual(self.m.estado, 'carpeta')
+        self.assertEqual(self.m.categoria, 'Juegos')
+        self.assertEqual(self.m.raiz, juegos_dir)
+        self.assertEqual(self.m.carpeta, juegos_dir)
+        self.assertEqual(self.m.aviso, 'aviso de prueba')
 
 
 if __name__ == '__main__':
