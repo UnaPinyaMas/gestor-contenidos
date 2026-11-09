@@ -9,6 +9,7 @@ from unittest.mock import patch
 import wave
 import pygame
 import menu
+import interfaz_musica
 from video_player import VideoPlayer
 
 
@@ -59,6 +60,7 @@ class ReproduccionTest(unittest.TestCase):
 
     def test_arrastrar_barras_con_el_dedo(self):
         self.open_silent(self.wav)
+        self.m.estado = 'video'          # barras del reproductor de vídeo (estilo YouTube)
         self.m.dibujar()
         w, h = self.m.vista.pantalla.get_size()
 
@@ -84,6 +86,82 @@ class ReproduccionTest(unittest.TestCase):
             dedo(pygame.FINGERUP, 500, h - 20)
             self.assertEqual(self.m.volumen, 100)
             self.assertIsNone(self.m.arrastre)
+
+    def esperar_metadatos(self):
+        for _ in range(400):                       # ffprobe va en otro hilo
+            if all(p.leida for p in self.m._pistas.values()):
+                return
+            time.sleep(.01)
+
+    def test_reproductor_audio_barra_y_controles(self):
+        self.open_silent(self.wav)
+        self.esperar_metadatos()
+        self.m.dibujar()
+        w, h = self.m.vista.pantalla.get_size()
+
+        def dedo(tipo, x, y):
+            self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=0))
+
+        acciones = {a if not isinstance(a, tuple) else a[0]: r for r, a in self.m.vista.botones}
+        for esperada in ('volver', 'pausa', 'audio_anterior', 'audio_siguiente', 'buscar', 'letra'):
+            self.assertIn(esperada, acciones)
+        barra = next(a[1] for _, a in self.m.vista.botones if isinstance(a, tuple) and a[0] == 'buscar')
+        with patch.object(self.m.player, 'command', wraps=self.m.player.command) as cmd:
+            # La barra de progreso sigue al dedo y salta al soltar.
+            dedo(pygame.FINGERDOWN, barra.x + 10, barra.centery)
+            dedo(pygame.FINGERMOTION, barra.centerx, barra.centery)
+            self.assertIsNotNone(self.m.arrastre)
+            dedo(pygame.FINGERUP, barra.centerx, barra.centery)
+            self.assertIsNone(self.m.arrastre)
+            self.assertTrue(any(c.args[:1] == ('seek',) and c.args[2] == 'absolute-percent'
+                                for c in cmd.call_args_list))
+            # El botón central pausa y reanuda (al soltar el dedo).
+            x, y = acciones['pausa'].center
+            dedo(pygame.FINGERDOWN, x, y)
+            dedo(pygame.FINGERUP, x, y)
+            self.assertTrue(self.m.pausa)
+            # ⏮ al principio de la pista (fuera de Music): vuelve a 0, no cambia de pista.
+            self.m.posicion = 1.0
+            self.m.accion('audio_anterior')
+            cmd.assert_any_call('seek', '0', 'absolute')
+        self.m.accion('volver')
+        self.assertEqual(self.m.estado, 'carpeta')
+
+    def test_lista_music_y_pistas_contiguas(self):
+        audio = self.root / 'audio'
+        audio.mkdir()
+        for nombre in ('a.wav', 'b.wav', 'c.wav'):
+            (audio / nombre).write_bytes(self.wav.read_bytes())
+        (audio / 'b.lrc').write_text('[ar:Alguien]\n[00:00.50]Primera línea\n[00:02.00]Segunda línea\n',
+                                     encoding='utf-8')
+        with patch.object(menu, 'RECURSOS', self.root), \
+             patch.object(menu, 'VideoPlayer', side_effect=lambda p, **kw: VideoPlayer(p, audio=False, **kw)):
+            self.m.estado = 'menu'
+            self.m.accion('Audio')                   # burbuja Audio del Inicio
+            self.assertEqual(self.m.estado, 'musica')
+            self.esperar_metadatos()
+            self.assertEqual([p.titulo for p in self.m.pistas], ['a', 'b', 'c'])
+            self.m.dibujar()
+            pistas = [a[1] for _, a in self.m.vista.botones if isinstance(a, tuple) and a[0] == 'pista']
+            self.assertEqual(pistas, [0, 1, 2])
+            self.m.accion(('pista', 0))
+            self.assertEqual((self.m.estado, self.m.indice_pista), ('audio', 0))
+            self.m.accion('audio_siguiente')
+            self.assertEqual(self.m.indice_pista, 1)
+            self.assertTrue(self.m.pista_actual.sincronizada)
+            self.assertEqual(self.m.vista.audio.linea_actual(self.m.pista_actual, 1.0), 0)
+            self.m.dibujar()
+            self.m.posicion = 1.0
+            self.m.accion('audio_anterior')          # pronto en la pista: la anterior
+            self.assertEqual(self.m.indice_pista, 0)
+            self.m.accion('volver')
+            self.assertEqual(self.m.estado, 'musica')
+            self.assertIsNone(self.m.player)
+
+    def test_leer_lrc(self):
+        letra = interfaz_musica.leer_lrc('[ti:Título]\n[00:10.00][00:30.00]Estribillo\n[00:05.5]Inicio\n')
+        self.assertEqual(letra, [(5.5, 'Inicio'), (10.0, 'Estribillo'), (30.0, 'Estribillo')])
+        self.assertEqual(interfaz_musica.leer_lrc('Sin tiempos\nOtra'), [(None, 'Sin tiempos'), (None, 'Otra')])
 
     def test_audio_final_regresa_sin_cerrar(self):
         self.open_silent(self.wav)

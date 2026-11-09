@@ -3,6 +3,7 @@ from pathlib import Path
 import pygame
 from video_player import VideoPlayer
 from menu import Vista, ANCHO, ALTO
+import tiempo
 
 BASE = Path(__file__).resolve().parent
 VIDEO_INICIO = BASE / "recursos" / "videos" / "intro.mp4"
@@ -11,7 +12,7 @@ LOGO = BASE / "recursos" / "imagenes" / "logo.png"
 
 def mostrar_inicio():
     vista = Vista()
-    reloj = pygame.time.Clock()
+    reloj = tiempo.Reloj()
     reproductor = None
     logo = None
     try:
@@ -26,7 +27,7 @@ def mostrar_inicio():
             except (OSError, RuntimeError) as error:
                 print("Intro no disponible:", error, flush=True)
 
-        inicio = pygame.time.get_ticks()
+        inicio = tiempo.ms()
         ultimo_alpha = -1
         while True:
             mover = False
@@ -53,10 +54,10 @@ def mostrar_inicio():
                 except RuntimeError as error:
                     print("Error en la intro:", error, flush=True)
                     return True
-            elif pygame.time.get_ticks() - inicio >= 1200:
+            elif tiempo.ms() - inicio >= 1200:
                 return True
 
-            alpha = min(255, (pygame.time.get_ticks() - inicio) * 255 // 850)
+            alpha = min(255, (tiempo.ms() - inicio) * 255 // 850)
             if nuevo or alpha != ultimo_alpha:
                 vista.lienzo.fill((10, 15, 20))
                 if reproductor:

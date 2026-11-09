@@ -1,0 +1,9 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="92" height="26" viewBox="0 0 92 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+<ellipse id="brillo inferior" cx="46" cy="13" rx="46" ry="13" fill="url(#paint0_linear_0_25)"/>
+<defs>
+<linearGradient id="paint0_linear_0_25" x1="46" y1="0" x2="46" y2="26" gradientUnits="userSpaceOnUse">
+<stop stop-color="white" stop-opacity="0"/>
+<stop offset="1" stop-color="white" stop-opacity="0.28"/>
+</linearGradient>
+</defs>
+</svg>

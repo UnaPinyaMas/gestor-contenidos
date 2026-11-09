@@ -9,8 +9,11 @@ from unittest.mock import patch
 import zipfile
 import pygame
 import pymupdf
+import time
 import menu
 import juegos
+import interfaz_redes
+import interfaz_juegos
 from documentos import LectorDocumento
 
 
@@ -151,6 +154,15 @@ class ContenidosTest(unittest.TestCase):
         # Pulsar un lateral mueve el carrusel (nota del wireframe).
         tocar('carrusel_der')
         self.assertEqual(self.m.seccion_central(), 'Libros')
+        # Mientras se arrastra, el carrusel sigue al dedo; si vuelve al sitio, no cambia.
+        dedo(pygame.FINGERDOWN, 400, h // 2)
+        dedo(pygame.FINGERMOTION, 350, h // 2)
+        self.assertTrue(2 < self.m.carrusel < 3)
+        dedo(pygame.FINGERMOTION, 400, h // 2)
+        dedo(pygame.FINGERUP, 400, h // 2)
+        while self.m.animar_inicio():
+            pass
+        self.assertEqual(self.m.seccion_central(), 'Libros')
         # Deslizar el dedo hacia la derecha vuelve a Vídeos.
         dedo(pygame.FINGERDOWN, 300, h // 2)
         dedo(pygame.FINGERUP, 420, h // 2)
@@ -168,41 +180,151 @@ class ContenidosTest(unittest.TestCase):
             self.m.dibujar()
         self.assertIsNone(self.m.vista.posicion(pygame.event.Event(pygame.FINGERDOWN, x=0, y=.5)))
 
-    def test_menu_de_energia(self):
+    def _tocar(self, accion):
+        """Toca el centro de la zona de 'accion' y deja acabar las animaciones."""
+        w, h = self.m.vista.pantalla.get_size()
+        self.m.dibujar()
+        x, y = next(r for r, a in self.m.vista.botones if a == accion).center
+        for tipo in (pygame.FINGERDOWN, pygame.FINGERUP):
+            self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=1))
+        while self.m.animar_inicio() and not self.m.aviso_inicio:
+            pass
+
+    def test_energia_en_ajustes(self):
         self.m.estado = 'menu'
         w, h = self.m.vista.pantalla.get_size()
-
-        def tocar_en(punto):
-            for tipo in (pygame.FINGERDOWN, pygame.FINGERUP):
-                self.m.evento(pygame.event.Event(tipo, x=punto[0] / w, y=punto[1] / h, finger_id=1))
-            self.m.dibujar()
-
-        def centro(accion):
-            return next(r for r, a in self.m.vista.botones if a == accion).center
-
         self.m.dibujar()
-        tocar_en(centro('energia'))
-        self.assertTrue(self.m.energia_abierta)
         acciones = [a for _, a in self.m.vista.botones]
-        self.assertNotIn('carrusel_der', acciones)     # el carrusel no responde debajo
-        self.assertIn('reiniciar', acciones)
-        # Apagar llama a systemctl; si falta el permiso se avisa y TerraHub sigue.
+        self.assertNotIn('energia', acciones)           # ya no hay botón de energía suelto
+        self._tocar('panel')
+        self.assertEqual(self.m.estado, 'ajustes')
+        # Las opciones de energía están plegadas bajo la primera fila; tocarla las despliega.
+        self.m.dibujar()
+        acciones = [a for _, a in self.m.vista.botones]
+        self.assertLess(acciones.index('energia'), acciones.index('ajuste_fecha'))
+        self.assertNotIn('apagar', acciones)
+        self._tocar('energia')
+        self.assertEqual(self.m.energia, 1.0)
+        self.m.dibujar()
+        acciones = [a for _, a in self.m.vista.botones]
+        self.assertEqual([a for a in acciones if a in ('suspender', 'reiniciar', 'apagar')],
+                         ['suspender', 'reiniciar', 'apagar'])
+        # Apagar pide un segundo toque; luego llama a systemctl y, si falta el permiso, avisa.
         with patch.object(menu, 'ejecutar_energia', return_value=False) as energia:
-            tocar_en(centro('apagar'))
+            self._tocar('apagar')
+            energia.assert_not_called()
+            self.assertIn('otra vez', self.m.aviso_inicio)
+            self.m.aviso_inicio = ''
+            self._tocar('apagar')
         energia.assert_called_once_with('poweroff')
         self.assertIn('permiso', self.m.aviso_inicio)
         self.assertTrue(self.m.ejecutando)
         # Suspender: pantalla en negro; el toque que despierta no activa nada.
-        tocar_en(centro('energia'))
-        tocar_en(centro('suspender'))
+        self.m.accion('suspender')
         self.assertEqual(self.m.estado, 'reposo')
-        tocar_en((w // 2, h // 2))
+        self.m.evento(pygame.event.Event(pygame.FINGERDOWN, x=.5, y=.5, finger_id=1))
         self.assertEqual(self.m.estado, 'menu')
-        self.assertFalse(self.m.energia_abierta)
-        # Tocar fuera de la tarjeta la cierra.
-        tocar_en(centro('energia'))
-        tocar_en((w // 2, h - 5))
-        self.assertFalse(self.m.energia_abierta)
+        self.assertEqual(self.m.panel, 0)
+
+    def test_barra_y_carrusel_de_ajustes(self):
+        self.m.estado = 'menu'
+        self.m.dibujar()
+        acciones = [a for _, a in self.m.vista.botones]
+        self.assertIn('redes', acciones)                  # red de la barra superior
+        self.assertEqual(self.m.hora_pintada, time.strftime('%H:%M'))
+        # El círculo crece sobre el Inicio (sin toques debajo) hasta mostrar los ajustes.
+        self.m.dibujar()
+        x, y = next(r for r, a in self.m.vista.botones if a == 'panel').center
+        w, h = self.m.vista.pantalla.get_size()
+        for tipo in (pygame.FINGERDOWN, pygame.FINGERUP):
+            self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=1))
+        self.m.animar_inicio()
+        self.m.dibujar()
+        self.assertEqual(self.m.estado, 'menu')
+        self.assertGreater(self.m.panel, 0)
+        self.assertEqual(self.m.vista.botones, [])
+        while self.m.animar_inicio():
+            pass
+        self.assertEqual(self.m.estado, 'ajustes')
+        self.assertIsNone(self.m.captura)
+        # Al acabar, la pantalla es exactamente la última imagen de la animación (sin salto).
+        self.m.dibujar()
+        acciones = [a for _, a in self.m.vista.botones]
+        self.assertNotIn('volver', acciones)              # se cierra con el círculo
+        for accion in ('energia', 'ajuste_fecha', 'ajuste_redes', 'ajuste_ip', 'ajuste_fondo'):
+            self.assertIn(accion, acciones)
+        # Mientras se pulsa una fila se resalta (se pinta otra imagen de fila).
+        x, y = next(r for r, a in self.m.vista.botones if a == 'ajuste_ip').center
+        self.m.dibujar()
+        antes = self.m.vista.completo.get_at((x, y))
+        self.m.evento(pygame.event.Event(pygame.FINGERDOWN, x=x / w, y=y / h, finger_id=1))
+        self.m.dibujar()
+        self.assertNotEqual(self.m.vista.completo.get_at((x, y)), antes)
+        self.m.evento(pygame.event.Event(pygame.FINGERUP, x=x / w, y=y / h, finger_id=1))
+        self.assertTrue(self.m.aviso_inicio.startswith('IP: '))
+        self.m.aviso_inicio = ''
+        self._tocar('panel')                              # el círculo encoge a la esquina
+        self.assertEqual(self.m.estado, 'menu')
+        self.assertEqual(self.m.panel, 0)
+        self.assertEqual(self.m.seccion_central(), 'Vídeos')  # el Inicio no se ha movido
+
+    def test_buscar_redes_agrupa_y_ordena(self):
+        salida = (' :Aula:40:WPA2\n'                  # mismo nombre, dos puntos de acceso
+                  ' :Aula:72:WPA2\n'
+                  '*:Casa\\:5G:55:WPA2 WPA3\n'         # \: es un ':' escapado por nmcli
+                  ' ::90:WPA2\n'                       # red oculta: sin nombre
+                  ' :Libre:30:\n')
+        with patch.object(interfaz_redes.subprocess, 'run',
+                          return_value=subprocess.CompletedProcess([], 0, stdout=salida)):
+            redes = interfaz_redes.buscar_redes()
+        self.assertEqual([r['ssid'] for r in redes], ['Casa:5G', 'Aula', 'Libre'])
+        self.assertTrue(redes[0]['conectada'])
+        self.assertEqual(redes[1]['senal'], 72)
+        self.assertFalse(redes[2]['segura'])
+        self.assertEqual([interfaz_redes.nivel(s) for s in (0, 25, 59, 60, 100)], [0, 1, 2, 3, 4])
+
+    def test_redes_disponibles(self):
+        falsas = [{'ssid': f'Red {i}', 'senal': 90 - i * 10, 'conectada': i == 0, 'segura': True}
+                  for i in range(6)]
+        w, h = self.m.vista.pantalla.get_size()
+
+        def dedo(tipo, x, y):
+            self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=1))
+
+        self.m.estado = 'ajustes'
+        with patch.object(interfaz_redes, 'buscar_redes', return_value=falsas):
+            self.m.accion('ajuste_redes')
+            for _ in range(200):                       # la búsqueda va en otro hilo
+                if self.m.redes is not None:
+                    break
+                time.sleep(.01)
+        self.assertEqual(self.m.estado, 'redes')
+        self.m.dibujar()
+        filas = [a for _, a in self.m.vista.botones if isinstance(a, tuple)]
+        self.assertEqual(filas[:4], [('red', f'Red {i}') for i in range(4)])
+        self.assertNotIn(('red', 'Red 5'), filas)        # la última queda fuera: hay scroll
+        # Arrastrar: la lista sigue al dedo píxel a píxel...
+        dedo(pygame.FINGERDOWN, w // 2, h - 60)
+        dedo(pygame.FINGERMOTION, w // 2, h - 100)
+        self.assertGreater(self.m.redes_scroll, 0)
+        self.assertLess(self.m.redes_scroll, interfaz_redes.PASO)
+        # ...y al soltar con un gesto rápido sigue por inercia hasta el final, sin pasarse.
+        for y in range(h - 140, 40, -60):
+            dedo(pygame.FINGERMOTION, w // 2, y)
+        dedo(pygame.FINGERUP, w // 2, 40)
+        for _ in range(400):
+            time.sleep(.01)
+            if not self.m.animar_inicio() and self.m.redes_vel == 0:
+                break
+        self.assertEqual(self.m.redes_scroll, self.m.redes_maximo())
+        self.assertGreater(self.m.redes_maximo(), 0)
+        self.m.dibujar()
+        rect = next(r for r, a in self.m.vista.botones if a == ('red', 'Red 5'))
+        dedo(pygame.FINGERDOWN, *rect.center)
+        dedo(pygame.FINGERUP, *rect.center)
+        self.assertIn('próximamente', self.m.aviso_inicio)
+        self.m.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+        self.assertEqual(self.m.estado, 'ajustes')       # Volver regresa a Ajustes
 
     def test_enlace_fuera_de_seccion(self):
         section = self.root / 'seccion'
@@ -235,14 +357,62 @@ class ContenidosTest(unittest.TestCase):
                 self.assertTrue(self.m.ejecutando)
                 self.assertEqual(self.m.estado, 'carpeta')
 
-    def test_volver_del_emulador_abre_la_carpeta(self):
+    def test_volver_del_emulador_abre_games(self):
         juegos_dir = menu.RECURSOS / 'juegos'
         self.m.abrir_carpeta(juegos_dir, 'aviso de prueba')
-        self.assertEqual(self.m.estado, 'carpeta')
-        self.assertEqual(self.m.categoria, 'Juegos')
-        self.assertEqual(self.m.raiz, juegos_dir)
-        self.assertEqual(self.m.carpeta, juegos_dir)
-        self.assertEqual(self.m.aviso, 'aviso de prueba')
+        self.assertEqual(self.m.estado, 'juegos')
+        self.assertEqual(self.m.aviso_inicio, 'aviso de prueba')
+
+    def test_pantalla_games(self):
+        roms = []
+        for i in range(15):                            # 13 caben por página: 2 páginas
+            rom = self.root / f'Juego {i:02d} [GB].gb'
+            rom.write_bytes(b'rom')
+            roms.append(rom)
+        portada = pygame.Surface((40, 30))
+        portada.fill((200, 30, 30))
+        pygame.image.save(portada, str(self.root / 'Juego 00 [GB].png'))
+        self.assertEqual(interfaz_juegos.portada(roms[0]), self.root / 'Juego 00 [GB].png')
+        self.assertIsNone(interfaz_juegos.portada(roms[1]))
+        w, h = self.m.vista.pantalla.get_size()
+
+        def dedo(tipo, x, y):
+            self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=1))
+
+        def esperar():
+            for _ in range(300):
+                time.sleep(.005)
+                if not self.m.animar_inicio():
+                    break
+
+        with patch.object(menu, 'buscar_juegos', return_value=roms), \
+             patch.object(menu, 'JUEGOS', self.root):
+            self.m.estado = 'menu'
+            self.m.accion('Juegos')                    # burbuja Juegos del Inicio
+            self.assertEqual(self.m.estado, 'juegos')
+            self.m.dibujar()
+            juegos_tocables = [a[1] for _, a in self.m.vista.botones if isinstance(a, tuple)]
+            self.assertEqual(juegos_tocables, list(range(13)))
+            # Arrastrar la página: sigue al dedo y al soltar pasa a la siguiente.
+            dedo(pygame.FINGERDOWN, w - 150, h // 2)
+            dedo(pygame.FINGERMOTION, w - 250, h // 2)
+            self.assertTrue(0 < self.m.juegos_pos < 1)
+            dedo(pygame.FINGERUP, w - 300, h // 2)
+            esperar()
+            self.assertEqual(self.m.juegos_pos, 1)
+            self.m.accion('juegos_der')                # no hay más páginas
+            self.assertEqual(self.m.juegos_destino, 1)
+            self.m.dibujar()
+            rect = next(r for r, a in self.m.vista.botones if a == ('juego', 14))
+            # Tocar una portada lanza el juego; si RetroArch falla, se avisa en Games.
+            with patch.object(menu, 'ejecutar_juego', side_effect=RuntimeError('Falta RetroArch')) as lanzar:
+                dedo(pygame.FINGERDOWN, *rect.center)
+                dedo(pygame.FINGERUP, *rect.center)
+            lanzar.assert_called_once_with(roms[14])
+            self.assertEqual(self.m.estado, 'juegos')
+            self.assertIn('RetroArch', self.m.aviso_inicio)
+            self.m.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+            self.assertEqual(self.m.estado, 'menu')
 
 
 if __name__ == '__main__':
