@@ -1,4 +1,4 @@
-"""Menu y explorador de carpetas de TerraHub."""
+"""Menú de TerraHub: estados, toques y dibujo de cada pantalla (entrega de diseño v2)."""
 import math
 from pathlib import Path
 import socket
@@ -14,25 +14,40 @@ import interfaz_inicio
 import interfaz_redes
 import interfaz_juegos
 import interfaz_musica
+import interfaz_teclado
+import interfaz_fondo
+import interfaz_videos
+import interfaz_libros
+import interfaz_imagenes
+import fondo as fondos
+import miniaturas
+import estilo
 import tiempo
 
 ANCHO, ALTO = 800, 600
 BASE = Path(__file__).resolve().parent
 RECURSOS = BASE / "recursos"
-# Secciones del carrusel de Inicio. Libros agrupa dos carpetas, que se muestran
-# como subcarpetas al entrar.
+# Secciones del carrusel de Inicio. Libros agrupa dos carpetas.
 CARPETAS = {"Audio": "audio", "Vídeos": "videos", "Libros": ("pdf", "epub"),
             "Imágenes": "imagenes", "Juegos": "juegos"}
 VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
 AUDIO_EXT = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus", ".wma"}
 FOTO_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+LIBRO_EXT = {".pdf", ".epub", ".cbz"}
 JUEGO_EXT = {".gb", ".gbc", ".sgb"}
 FONDO = (10, 15, 20)
-AZUL, VERDE, ROJO = (21, 101, 192), (46, 125, 50), (165, 55, 65)
+AZUL = (21, 101, 192)
 POR_PAGINA = 5
 CONTROLES_MS = 3500        # tiempo que siguen visibles los controles del vídeo
 MOVER = (pygame.MOUSEMOTION, pygame.FINGERMOTION)
 SOLTAR = (pygame.MOUSEBUTTONUP, pygame.FINGERUP)
+
+# Pantallas táctiles nuevas (toques al soltar, deslizar con inercia).
+TACTILES = ("menu", "ajustes", "fondo", "redes", "clave", "juegos", "musica", "audio",
+            "videos", "video", "libros", "documento", "imagenes", "foto")
+CON_BARRA = ("menu", "ajustes", "fondo", "redes", "clave", "juegos", "musica", "audio", "videos", "libros",
+             "imagenes")
+PAGINADAS = ("juegos", "musica", "videos", "imagenes")
 
 
 def direccion_ip():
@@ -62,8 +77,32 @@ def ejecutar_energia(verbo):
     return r.returncode == 0
 
 
+def buscar_archivos(carpetas, extensiones, excluir=()):
+    """Archivos con esas extensiones dentro de las carpetas (sin ocultos), por nombre."""
+    encontrados = []
+    for carpeta in carpetas:
+        carpeta.mkdir(parents=True, exist_ok=True)
+        for p in carpeta.rglob("*"):
+            partes = p.relative_to(carpeta).parts
+            if (p.is_file() and p.suffix.lower() in extensiones and p.name not in excluir
+                    and not any(parte.startswith(".") for parte in partes)):
+                encontrados.append(p)
+    return sorted(encontrados, key=lambda p: p.stem.casefold())
+
+
 class Vista:
-    """Lienzo de 800x600, adaptado a la pantalla, con imagen en cache."""
+    """Pantalla: lienzo de 800x600 escalado (explorador antiguo) o 'completo' a la
+    resolución real (todas las pantallas del diseño). Recursos de cada pantalla, al usarse."""
+    PANTALLAS = {
+        "inicio": interfaz_inicio.PantallaInicio, "ajustes": interfaz_inicio.PantallaAjustes,
+        "redes": interfaz_redes.PantallaRedes, "juegos": interfaz_juegos.PantallaJuegos,
+        "musica": interfaz_musica.PantallaMusica, "audio": interfaz_musica.PantallaAudio,
+        "fondos": interfaz_fondo.PantallaFondo, "clave": interfaz_teclado.PantallaClave,
+        "videos": interfaz_videos.PantallaVideos, "video": interfaz_videos.PantallaVideo,
+        "libros": interfaz_libros.PantallaLibros, "lector": interfaz_libros.PantallaLector,
+        "imagenes": interfaz_imagenes.PantallaImagenes, "visor": interfaz_imagenes.PantallaVisor,
+    }
+
     def __init__(self):
         self.pantalla = pygame.display.get_surface()
         self.lienzo = pygame.Surface((ANCHO, ALTO)).convert()
@@ -73,58 +112,30 @@ class Vista:
         self.area = pygame.Rect(0, 0, round(ANCHO * escala), round(ALTO * escala))
         self.area.center = self.pantalla.get_rect().center
         self.fuente = pygame.font.Font(None, 30)
-        self.fuente_peq = pygame.font.Font(None, 22)
-        # El reproductor dibuja a la resolución real de la pantalla, sin escalar,
-        # para que el vídeo la ocupe entera (el lienzo 800x600 deja franjas).
         self.completo = pygame.Surface((w, h)).convert()
         self.modo_completo = False
-        self.degradado_sup = iv.degradado(w, 110, hacia_abajo=False)
-        self.degradado_inf = iv.degradado(w, 170, hacia_abajo=True)
-        self._inicio = self._ajustes = self._redes = self._juegos = None
-        self._musica = self._audio = None
+        self.esc = interfaz_inicio.Escala((w, h))
+        self._pantallas = {}
+        self._tornar = {}
+        self.atras = None            # rectángulo del Tornar visible (o None)
         self.botones = []
 
-    @property
-    def inicio(self):
-        """Recursos de la pantalla de Inicio (SVG rasterizados), creados al usarse."""
-        if self._inicio is None:
-            self._inicio = interfaz_inicio.PantallaInicio(self.pantalla.get_size())
-        return self._inicio
+    def __getattr__(self, nombre):
+        # self.inicio, self.ajustes, self.redes...: cada pantalla se monta la primera vez.
+        clase = Vista.PANTALLAS.get(nombre)
+        if clase is None:
+            raise AttributeError(nombre)
+        pantallas = self.__dict__["_pantallas"]
+        if nombre not in pantallas:
+            pantallas[nombre] = clase(self.__dict__["pantalla"].get_size())
+        return pantallas[nombre]
 
-    @property
-    def ajustes(self):
-        """Recursos del carrusel de ajustes, creados al usarse."""
-        if self._ajustes is None:
-            self._ajustes = interfaz_inicio.PantallaAjustes(self.pantalla.get_size())
-        return self._ajustes
-
-    @property
-    def redes(self):
-        """Recursos de la pantalla 'Redes disponibles', creados al usarse."""
-        if self._redes is None:
-            self._redes = interfaz_redes.PantallaRedes(self.pantalla.get_size())
-        return self._redes
-
-    @property
-    def juegos(self):
-        """Recursos de la pantalla 'Games', creados al usarse."""
-        if self._juegos is None:
-            self._juegos = interfaz_juegos.PantallaJuegos(self.pantalla.get_size())
-        return self._juegos
-
-    @property
-    def musica(self):
-        """Recursos de la lista 'Music', creados al usarse."""
-        if self._musica is None:
-            self._musica = interfaz_musica.PantallaMusica(self.pantalla.get_size())
-        return self._musica
-
-    @property
-    def audio(self):
-        """Recursos del reproductor de audio, creados al usarse."""
-        if self._audio is None:
-            self._audio = interfaz_musica.PantallaAudio(self.pantalla.get_size())
-        return self._audio
+    def tornar(self, rect):
+        """Control Tornar en la posición 'rect' (px del diseño), montado una vez."""
+        clave = tuple(rect)
+        if clave not in self._tornar:
+            self._tornar[clave] = interfaz_inicio.BotonTornar(self.esc, rect)
+        return self._tornar[clave]
 
     def texto(self, texto, centro, ancho=750, izquierda=False, sup=None):
         while self.fuente.size(texto)[0] > ancho and len(texto) > 4:
@@ -134,7 +145,7 @@ class Vista:
         (sup or self.lienzo).blit(imagen, rect)
 
     def zona(self, rect, accion):
-        """Zona táctil sin dibujo (los iconos del reproductor se dibujan aparte)."""
+        """Zona táctil (lo que se pinta lo hace cada pantalla)."""
         self.botones.append((pygame.Rect(rect), accion))
 
     def boton(self, nombre, rect, accion, color=AZUL):
@@ -145,6 +156,16 @@ class Vista:
 
     def posicion(self, evento, tipos=(pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN)):
         """Posición en el lienzo de un toque/clic de los tipos indicados, o None."""
+        pos = self.posicion_pantalla(evento, tipos)
+        if pos is None or self.modo_completo:
+            return pos
+        if not self.area.collidepoint(pos):
+            return None
+        return ((pos[0] - self.area.x) * ANCHO / self.area.width,
+                (pos[1] - self.area.y) * ALTO / self.area.height)
+
+    def posicion_pantalla(self, evento, tipos=(pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN)):
+        """Posición en píxeles de la pantalla (también fuera del lienzo), o None."""
         if evento.type not in tipos or getattr(evento, "touch", False):
             return None
         if evento.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
@@ -158,12 +179,7 @@ class Vista:
         else:
             w, h = self.pantalla.get_size()
             pos = (evento.x * w, evento.y * h)
-        if self.modo_completo:
-            return pos
-        if not self.area.collidepoint(pos):
-            return None
-        return ((pos[0] - self.area.x) * ANCHO / self.area.width,
-                (pos[1] - self.area.y) * ALTO / self.area.height)
+        return pos
 
     def preparar(self):
         if self.modo_completo:
@@ -189,7 +205,6 @@ class Menu:
         self.aviso = ""
         self.player = None
         self.pausa = False
-        self.foto = None
         self.nombre = ""
         self.documento = None
         self.pagina_documento = None
@@ -205,40 +220,65 @@ class Menu:
         self.subcarpetas = None     # carpetas que agrupa la sección (Libros)
         # Carrusel de Inicio: posición animada y destino (índice en SECCIONES).
         self.carrusel = self.carrusel_destino = 1.0     # empieza en Vídeos
-        self.toque = None           # (posición, acción) al pulsar en Inicio
+        self.toque = None           # el dedo en una pantalla táctil (ver evento_inicio)
         self.aviso_inicio = ""
         self.aviso_inicio_hasta = 0
         # Círculo de la barra superior: 0 = en la esquina, 1 = cubre la pantalla (ajustes).
         self.panel = self.panel_destino = 0.0
-        self.confirmar = (None, 0)    # apagar/reiniciar piden un segundo toque: (acción, hasta)
+        self.confirmar = (None, 0)    # acciones delicadas piden un segundo toque: (acción, hasta)
         self.hora_pintada = ""
-        self.origen_redes = "menu"    # Redes se abre desde la barra (Inicio o ajustes)
+        self.origen_redes = "menu"    # a dónde vuelve 'Redes' (la pantalla desde la que se abrió)
         self.captura = None           # ajustes que se ven dentro del círculo al crecer/encoger
-        # Lista de ajustes: desplazamiento (px del diseño) con inercia, y la fila de energía
-        # desplegada (0..1, animado).
         self.ajustes_scroll = self.ajustes_vel = 0.0
         self.energia = self.energia_destino = 0.0
         self.ip = ""
-        # Redes disponibles (frame 4): None mientras nmcli busca. La lista se desplaza
-        # en px del diseño, con la velocidad que deja el dedo al soltar (inercia).
+        # Contraseña Wi-Fi (teclado táctil) y conexión en curso.
+        self.clave_red = None
+        self.clave = ""
+        self.clave_ver = self.clave_mayus = self.clave_simbolos = False
+        self.conectando = None        # ssid mientras nmcli conecta (en otro hilo)
+        self.resultado_red = None     # (ssid, conseguido, mensaje, con_clave) al acabar
+        # Fondo de pantalla del Inicio (imagen, GIF o MP4) y su pantalla de ajustes.
+        self.fondo = fondos.Fondo(self.vista.pantalla.get_size(),
+                                  crear_reproductor=lambda ruta, tam: VideoPlayer(ruta, audio=False, size=tam))
+        self.lista_fondos = []
+        self.fondo_scroll = self.fondo_vel = 0.0
+        # Control Tornar: violeta mientras se pulsa; vuelve al soltar encima.
+        self.atras_pulsado = False
+        # Redes disponibles: None mientras nmcli busca; lista desplazable con inercia.
         self.redes = None
         self.redes_scroll = 0.0
         self.redes_vel = 0.0
         self._ultimo_tick = tiempo.ms()
-        # Games (frame 9): juegos encontrados y página visible (decimal al deslizar).
+        # Juegos, Música, Vídeos e Imágenes: listas y página visible (decimal al deslizar).
         self.lista_juegos = []
         self.juegos_pos = self.juegos_destino = 0.0
-        # Music (frames 12 y 13): pistas, página visible y la que suena.
         self.pistas = []
         self._pistas = {}                    # ruta -> Pista (los metadatos se leen una vez)
         self.musica_pos = self.musica_destino = 0.0
         self.pista_actual = None
         self.indice_pista = None
-        self.origen_audio = "carpeta"        # a dónde vuelve 'Volver' desde el reproductor
+        self.origen_audio = "carpeta"        # a dónde vuelve 'Tornar' desde el reproductor
         self.letra_scroll = 0.0
         self.letra_vel = 0.0
         self.letra_tocada = -10 ** 9         # última vez que se movió la letra a mano (ms)
+        self.lista_videos = []
+        self.videos_pos = self.videos_destino = 0.0
+        self.lista_fotos = []
+        self.fotos_pos = self.fotos_destino = 0.0
+        self.foto_indice = 0
+        self.foto_desplazamiento = 0.0       # el dedo arrastra la foto del visor
+        self.lista_libros = []
+        self.libros_pos = self.libros_destino = 0.0
+        self.doc_arrastre = (0.0, 0.0)       # el dedo arrastra la página ampliada
+        self.origen_contenido = "carpeta"    # a dónde vuelven el vídeo, el lector y el visor
+        self.panel_video = False             # ajustes (volumen) del reproductor de vídeo
+        self.miniaturas = miniaturas.Miniaturas(avisar=self._miniatura_lista)
 
+    def _miniatura_lista(self):
+        self.sucio = True                    # desde el hilo de miniaturas: repintar
+
+    # --- Música ------------------------------------------------------------------------
     def _pista(self, ruta):
         """Pista de una ruta; sus metadatos (ffprobe/ffmpeg) se leen en segundo plano."""
         ruta = Path(ruta)
@@ -290,6 +330,7 @@ class Menu:
             self.estado = "musica"
             self.avisar_inicio(self.aviso or "No se pudo reproducir", 4000)
 
+    # --- Juegos, Vídeos, Libros e Imágenes ---------------------------------------------
     def abrir_juegos(self, aviso=""):
         """Pantalla 'Games' con los juegos de recursos/juegos."""
         self.estado = "juegos"
@@ -310,9 +351,71 @@ class Menu:
         if self.aviso:
             self.avisar_inicio(self.aviso, 4000)
 
+    def abrir_videos(self):
+        self.estado = "videos"
+        self.lista_videos = buscar_archivos([RECURSOS / "videos"], VIDEO_EXT, excluir=("intro.mp4",))
+        ultima = interfaz_videos.paginas(len(self.lista_videos)) - 1
+        self.videos_pos = self.videos_destino = float(min(round(self.videos_destino), ultima))
+        self.sucio = True
+
+    def abrir_imagenes(self):
+        self.estado = "imagenes"
+        self.lista_fotos = buscar_archivos([RECURSOS / "imagenes"], FOTO_EXT)
+        ultima = interfaz_videos.paginas(len(self.lista_fotos)) - 1
+        self.fotos_pos = self.fotos_destino = float(min(round(self.fotos_destino), ultima))
+        self.sucio = True
+
+    def abrir_libros(self):
+        self.estado = "libros"
+        self.lista_libros = buscar_archivos([RECURSOS / "epub", RECURSOS / "pdf"], LIBRO_EXT)
+        ultimo = max(0, len(self.lista_libros) - 1)
+        self.libros_pos = self.libros_destino = float(min(round(self.libros_destino), ultimo))
+        self.sucio = True
+
+    def abrir_desde(self, origen, ruta):
+        """Abre un vídeo, libro o imagen desde su pantalla (Tornar vuelve a ella)."""
+        self.raiz = self.carpeta = ruta.parent
+        self.subcarpetas = None
+        self.abrir(ruta)
+        if self.estado in ("video", "documento", "foto"):
+            self.origen_contenido = origen
+        elif self.aviso:                           # no se pudo abrir: aviso en la lista
+            self.estado = origen
+            self.avisar_inicio(self.aviso, 4000)
+            self.aviso = ""
+
+    def abrir_foto(self, indice):
+        self.foto_indice = indice
+        self.foto_desplazamiento = 0.0
+        self.origen_contenido = "imagenes"
+        self.estado = "foto"
+        self.sucio = True
+
+    def borrar_foto(self):
+        """Borra la imagen del visor (con segundo toque de confirmación)."""
+        if not self.lista_fotos or not self.confirmado("foto_borrar", "borrar la imagen"):
+            return
+        ruta = self.lista_fotos[self.foto_indice]
+        try:
+            ruta.unlink()
+        except OSError as error:
+            self.avisar_inicio(f"No se pudo borrar: {error.strerror or error}", 4000)
+            return
+        self.miniaturas.olvidar(ruta)
+        del self.lista_fotos[self.foto_indice]
+        self.avisar_inicio(f"{ruta.name} borrada", 3000)
+        if not self.lista_fotos:
+            self.volver()
+            return
+        self.foto_indice = min(self.foto_indice, len(self.lista_fotos) - 1)
+
+    # --- Redes ---------------------------------------------------------------------------
     def abrir_redes(self):
         """Muestra 'Redes disponibles' y busca las redes en segundo plano."""
-        if self.estado in ("menu", "ajustes"):
+        if self.estado == "audio":
+            self.cerrar_contenido()
+            self.estado = self.origen_audio
+        if self.estado not in ("redes", "clave"):
             self.origen_redes = self.estado
         self.estado = "redes"
         self.redes, self.redes_scroll, self.redes_vel = None, 0.0, 0.0
@@ -322,6 +425,120 @@ class Menu:
             self.sucio = True
         threading.Thread(target=buscar, daemon=True).start()
 
+    def tocar_red(self, ssid):
+        """Fila de 'Redes disponibles': conectarse (con contraseña si hace falta)."""
+        red = next((r for r in self.redes or [] if r["ssid"] == ssid), None)
+        if red is None:
+            return
+        if red["conectada"]:
+            self.avisar_inicio(f"Conectado a {ssid}  ·  IP {direccion_ip()}", 4000)
+        elif red.get("empresa"):
+            self.avisar_inicio("Las redes con usuario (802.1X) aún no se pueden configurar aquí", 4000)
+        elif not red["segura"] or ssid in interfaz_redes.redes_guardadas():
+            self.conectar_red(ssid)
+        else:
+            self.pedir_clave(red)
+
+    def pedir_clave(self, red, aviso=""):
+        """Pantalla de contraseña con teclado táctil."""
+        self.clave_red = red
+        self.clave = ""
+        self.clave_ver = self.clave_mayus = self.clave_simbolos = False
+        self.estado = "clave"
+        if aviso:
+            self.avisar_inicio(aviso, 4000)
+        self.sucio = True
+
+    def conectar_red(self, ssid, clave=None):
+        """Conecta en otro hilo (nmcli tarda unos segundos); el resultado lo recoge
+        fin_conexion desde el bucle principal."""
+        if self.conectando:
+            return
+        if clave is not None and len(clave) < 8:
+            self.avisar_inicio("La contraseña tiene al menos 8 caracteres", 3000)
+            return
+        self.conectando = ssid
+        self.avisar_inicio(f"Conectando a {ssid}...", 60000)
+
+        def conectar():
+            conseguido, mensaje = interfaz_redes.conectar(ssid, clave)
+            self.resultado_red = (ssid, conseguido, mensaje, clave is not None)
+        threading.Thread(target=conectar, daemon=True).start()
+
+    def fin_conexion(self):
+        ssid, conseguido, mensaje, con_clave = self.resultado_red
+        self.resultado_red = self.conectando = None
+        if conseguido:
+            self.clave = ""
+            if self.estado in ("clave", "redes"):
+                self.abrir_redes()               # vuelve a la lista, ya con la red nueva
+            self.avisar_inicio(f"{mensaje}  ·  IP {direccion_ip()}", 4000)
+            return
+        red = next((r for r in self.redes or [] if r["ssid"] == ssid), None)
+        if (not con_clave and red and red["segura"] and self.estado == "redes"
+                and "permiso" not in mensaje):
+            # La contraseña guardada ya no vale: pedirla.
+            self.pedir_clave(red, "Escribe la contraseña de la red")
+        else:
+            self.avisar_inicio(mensaje, 4000)
+
+    def tecla(self, valor):
+        """Tecla del teclado de contraseña (táctil o física)."""
+        if self.conectando:
+            return
+        if valor == "borrar":
+            self.clave = self.clave[:-1]
+        elif valor == "mayus":
+            self.clave_mayus = not self.clave_mayus
+        elif valor == "modo":
+            self.clave_simbolos = not self.clave_simbolos
+        elif valor == "ver":
+            self.clave_ver = not self.clave_ver
+        elif valor == "conectar":
+            self.conectar_red(self.clave_red["ssid"], self.clave)
+        elif len(self.clave) < interfaz_teclado.LARGO_MAXIMO:
+            letra = " " if valor == "espacio" else valor
+            self.clave += letra.upper() if self.clave_mayus else letra
+        self.sucio = True
+
+    # --- Tornar --------------------------------------------------------------------------
+    def tornar_visible(self):
+        """Posición (px del diseño) del Tornar de la pantalla actual, o None."""
+        e = self.estado
+        if e in ("redes", "clave", "fondo"):
+            return interfaz_inicio.TORNAR_BANDA
+        if e in ("juegos", "musica", "videos", "libros", "imagenes") or (e == "audio" and self.player):
+            return interfaz_inicio.TORNAR_CABECERA
+        if e == "video" and self.player is not None:
+            return interfaz_inicio.TORNAR_COMPLETO if self.controles_dibujados else None
+        if e in ("documento", "foto", "carpeta"):
+            return interfaz_inicio.TORNAR_COMPLETO
+        return None
+
+    def evento_atras(self, evento):
+        """Toques sobre el Tornar: violeta al pulsar, 'volver' al soltar encima."""
+        v = self.vista
+        if evento.type in (pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN):
+            p = v.posicion_pantalla(evento)
+            if p is not None and v.atras is not None and v.atras.toca(p):
+                self.atras_pulsado = True
+                if self.estado == "video":
+                    self.mostrar_controles()
+                self.sucio = True
+                return True
+            return False
+        if not self.atras_pulsado:
+            return False
+        if evento.type in SOLTAR:
+            p = v.posicion_pantalla(evento, SOLTAR)
+            self.atras_pulsado = False
+            self.sucio = True
+            if p is None or (v.atras is not None and v.atras.toca(p)):
+                self.accion("volver")
+            return True
+        return evento.type in MOVER
+
+    # --- utilidades ----------------------------------------------------------------------
     def redes_maximo(self):
         return interfaz_redes.desplazamiento_maximo(len(self.redes or []))
 
@@ -331,22 +548,28 @@ class Menu:
         self.sucio = True
 
     def k_diseno(self):
-        """Píxeles de pantalla por píxel del diseño de Figma."""
-        return self.vista.inicio.esc.k
+        """Píxeles de pantalla por píxel del diseño."""
+        return self.vista.esc.k
 
     def avisar_inicio(self, texto, ms=2500):
         self.aviso_inicio = texto
         self.aviso_inicio_hasta = tiempo.ms() + ms
         self.sucio = True
 
-    def energia_sistema(self, accion, verbo, texto):
-        """Apagar/reiniciar: el primer toque pide confirmación; el segundo (antes de 4 s)
-        muestra el aviso ya (la orden puede tardar) y llama a systemctl."""
+    def confirmado(self, accion, verbo):
+        """Acciones delicadas: el primer toque avisa; True si es el segundo (antes de 4 s)."""
         if self.confirmar[0] != accion or tiempo.ms() > self.confirmar[1]:
             self.confirmar = (accion, tiempo.ms() + 4000)
-            self.avisar_inicio(f"Toca otra vez para {accion}", 4000)
-            return
+            self.avisar_inicio(f"Toca otra vez para {verbo}", 4000)
+            return False
         self.confirmar = (None, 0)
+        return True
+
+    def energia_sistema(self, accion, verbo, texto):
+        """Apagar/reiniciar, con confirmación: muestra el aviso ya (la orden puede
+        tardar) y llama a systemctl."""
+        if not self.confirmado(accion, accion):
+            return
         self.avisar_inicio(texto, 15000)
         self.dibujar()
         self.vista.presentar()
@@ -354,8 +577,9 @@ class Menu:
             self.avisar_inicio("No se pudo: falta el permiso de deploy/instalar.sh", 4000)
 
     def girar(self, paso):
-        """Mueve el carrusel de Inicio un elemento, o Games/Music una página."""
-        if self.estado in ("juegos", "musica"):
+        """Mueve el carrusel de Inicio un elemento, una página (Games, Music, Vídeos,
+        Imágenes) o un libro."""
+        if self.estado in PAGINADAS + ("libros",):
             _, destino = self._carrusel_activo()
             nuevo = max(0, min(self._ultima_pagina(), round(getattr(self, destino)) + paso))
             setattr(self, destino, float(nuevo))
@@ -364,7 +588,7 @@ class Menu:
         self.sucio = True
 
     def animar_inicio(self):
-        """Avanza carruseles y lista de redes según el tiempo real; True si hay que repintar.
+        """Avanza carruseles, listas y el círculo según el tiempo real; True si hay que repintar.
 
         Va por tiempo (no por fotogramas), así el movimiento es igual de suave aunque
         la Raspberry dibuje a menos de 60 fps.
@@ -372,18 +596,26 @@ class Menu:
         ahora = tiempo.ms()
         dt = min(.05, max(.001, (ahora - self._ultimo_tick) / 1000))
         self._ultimo_tick = ahora
+        if self.resultado_red:                    # nmcli ha acabado (en otro hilo)
+            self.fin_conexion()
+            return True
         arrastrando = self.toque is not None and self.toque["arrastre"]
         cambio = False
-        acercar = 1 - math.exp(-dt * 14)          # recolocación del carrusel (~0,3 s)
-        for actual, destino in (("carrusel", "carrusel_destino"),
-                                ("energia", "energia_destino"),
-                                ("juegos_pos", "juegos_destino"),
-                                ("musica_pos", "musica_destino")):
+        acercar = 1 - math.exp(-dt * 14)          # recolocación (~0,3 s)
+        for actual, destino in (("carrusel", "carrusel_destino"), ("energia", "energia_destino"),
+                                ("juegos_pos", "juegos_destino"), ("musica_pos", "musica_destino"),
+                                ("videos_pos", "videos_destino"), ("fotos_pos", "fotos_destino"),
+                                ("libros_pos", "libros_destino")):
             a, d = getattr(self, actual), getattr(self, destino)
             if a != d and not arrastrando:
                 a += (d - a) * acercar
                 setattr(self, actual, d if abs(a - d) < .002 else a)
                 cambio = True
+        if self.foto_desplazamiento and not arrastrando:   # la foto vuelve a su sitio
+            self.foto_desplazamiento *= math.exp(-dt * 16)
+            if abs(self.foto_desplazamiento) < 1:
+                self.foto_desplazamiento = 0.0
+            cambio = True
         vertical = self._vertical()
         if vertical and not arrastrando:
             scroll, vel, maximo = vertical
@@ -425,7 +657,7 @@ class Menu:
             elif self.panel <= 0:
                 self.captura = None
             cambio = True
-        if self.estado in ("menu", "ajustes") and time.strftime("%H:%M") != self.hora_pintada:
+        if self.estado in CON_BARRA and time.strftime("%H:%M") != self.hora_pintada:
             cambio = True                             # la hora de la barra ha cambiado
         if self.aviso_inicio and tiempo.ms() > self.aviso_inicio_hasta:
             self.aviso_inicio = ""
@@ -433,10 +665,15 @@ class Menu:
         return cambio
 
     def abrir_panel(self):
-        """Círculo de la barra: desde Inicio crece hasta los ajustes; en ajustes, se cierra."""
+        """Círculo de la barra: crece hasta Configuración; en Configuración, se cierra.
+        Desde otra pantalla se vuelve primero al Inicio y crece desde allí."""
         if self.estado == "ajustes":
             self.cerrar_panel()
-        elif self.estado == "menu" and self.panel == 0:
+            return
+        if self.estado != "menu":
+            self.cerrar_contenido()
+            self.estado = "menu"
+        if self.panel == 0:
             self.ajustes_scroll = self.ajustes_vel = 0.0
             self.energia = self.energia_destino = 0.0
             self.confirmar = (None, 0)
@@ -446,7 +683,7 @@ class Menu:
         self.sucio = True
 
     def cerrar_panel(self):
-        """De los ajustes al Inicio: el círculo encoge hasta la esquina."""
+        """De Configuración al Inicio: el círculo encoge hasta la esquina."""
         self.capturar_ajustes()
         self.estado = "menu"
         self.panel, self.panel_destino = 1.0, 0.0
@@ -454,13 +691,13 @@ class Menu:
         self.sucio = True
 
     def valores_ajustes(self):
-        return {"ajuste_fecha": time.strftime("%H:%M  ·  %d/%m/%Y"), "ajuste_ip": self.ip}
+        return {"ajuste_fecha": time.strftime("%H:%M · %d/%m/%Y"), "ajuste_ip": self.ip}
 
     def capturar_ajustes(self):
-        """Pinta los ajustes, tal cual se verán, para mostrarlos dentro del círculo.
+        """Pinta Configuración, tal cual se verá, para mostrarla dentro del círculo.
 
-        Se hace antes de empezar la animación (montar los ajustes la primera vez tarda) y
-        se reinicia el reloj de la animación para que no dé un salto.
+        Se hace antes de empezar la animación (montarla la primera vez tarda) y se
+        reinicia el reloj de la animación para que no dé un salto.
         """
         v = self.vista
         if self.captura is None:
@@ -475,24 +712,31 @@ class Menu:
         return interfaz_inicio.SECCIONES[round(self.carrusel_destino) % n][1]
 
     def accion_ajuste(self, accion):
-        """Elemento central del carrusel de ajustes; sus pantallas aún no están diseñadas."""
         if accion == "ajuste_fecha":
-            self.avisar_inicio(time.strftime("%H:%M  ·  %d/%m/%Y"), 4000)
+            self.avisar_inicio(time.strftime("%H:%M · %d/%m/%Y"), 4000)
         elif accion == "ajuste_ip":
             self.avisar_inicio("IP: " + direccion_ip(), 5000)
         elif accion == "ajuste_redes":
             self.abrir_redes()
         elif accion == "ajuste_fondo":
-            self.avisar_inicio("Fondos de pantalla: próximamente", 3000)
+            self.lista_fondos = fondos.buscar_fondos(RECURSOS)
+            self.fondo_scroll = self.fondo_vel = 0.0
+            self.estado = "fondo"
 
+    # --- reproductor ---------------------------------------------------------------------
     def controles_visibles(self):
-        return (self.estado == "audio" or self.pausa or self.arrastre is not None or
+        return (self.estado == "audio" or self.pausa or self.panel_video or self.arrastre is not None or
                 tiempo.ms() < self.controles_hasta)
 
     def arrastrar(self, pos):
         """El dedo se mueve sobre una barra: el volumen cambia ya; el vídeo salta al soltar."""
         tipo, barra = self.arrastre
         self.fraccion_arrastre = max(0.0, min(1.0, (pos[0] - barra.x) / barra.width))
+        if tipo.startswith("fondo_"):            # deslizables HSV del fondo de pantalla
+            nombre = {"fondo_h": "tono", "fondo_s": "saturacion", "fondo_v": "brillo"}[tipo]
+            self.fondo.ajustar(**{nombre: interfaz_fondo.valor(tipo, self.fraccion_arrastre)})
+            self.sucio = True
+            return
         if tipo == "volumen":
             self.accion(("volumen", self.fraccion_arrastre))
         elif self.duracion:
@@ -504,6 +748,10 @@ class Menu:
             self.arrastrar(pos)
         tipo, _ = self.arrastre
         self.arrastre = None
+        if tipo.startswith("fondo_"):
+            self.fondo.guardar()
+            self.sucio = True
+            return
         if tipo == "buscar":
             self.accion(("buscar", self.fraccion_arrastre))
         self.mostrar_controles()
@@ -543,10 +791,10 @@ class Menu:
             self.player.command("set", "volume", str(self.volumen))
         self.mostrar_controles()
 
+    # --- explorador de carpetas (antiguo: solo al volver del emulador a otra carpeta) ---
     def actualizar(self):
         try:
             if self.subcarpetas and self.carpeta == self.raiz:
-                # Sección que agrupa carpetas (Libros: pdf y epub): mostrar solo esas.
                 self.archivos = [self.raiz / s for s in self.subcarpetas]
                 for carpeta in self.archivos:
                     carpeta.mkdir(parents=True, exist_ok=True)
@@ -564,23 +812,23 @@ class Menu:
         self.sucio = True
 
     def abrir_carpeta(self, carpeta, aviso=""):
-        """Abre una carpeta dentro de su sección, p. ej. al volver del emulador."""
+        """Abre la sección de una carpeta, p. ej. al volver del emulador."""
         carpeta = Path(carpeta).resolve()
         for nombre, subs in CARPETAS.items():
             for sub in (subs if isinstance(subs, tuple) else (subs,)):
                 raiz = RECURSOS / sub
-                if carpeta.is_relative_to(raiz.resolve()) and nombre == "Juegos":
-                    self.abrir_juegos(aviso)        # al volver del emulador: pantalla Games
-                    return
                 if carpeta.is_relative_to(raiz.resolve()):
-                    self.accion(nombre)
-                    self.carpeta = raiz / carpeta.relative_to(raiz.resolve())
-                    self.actualizar()
-                    self.aviso = aviso
+                    if nombre == "Juegos":
+                        self.abrir_juegos(aviso)        # al volver del emulador: pantalla Games
+                    else:
+                        self.accion(nombre)
+                        if aviso:
+                            self.avisar_inicio(aviso, 4000)
                     return
 
     def cerrar_contenido(self):
         self.arrastre = None
+        self.panel_video = False
         if self.player:
             self.player.close()
             self.player = None
@@ -588,19 +836,24 @@ class Menu:
             self.documento.close()
             self.documento = None
         self.pagina_documento = None
-        self.foto = None
 
     def volver(self):
         self.cerrar_contenido()
-        if self.estado == "redes":
-            self.estado = self.origen_redes  # Inicio o ajustes, según desde dónde se abrió
+        if self.estado == "fondo":
+            self.estado = "ajustes"
+        elif self.estado == "clave":
+            self.estado = "redes"
+            self.clave = ""
+        elif self.estado == "redes":
+            self.estado = self.origen_redes  # la pantalla desde la que se abrió
         elif self.estado == "ajustes":
             self.cerrar_panel()
         elif self.estado == "audio":
             self.estado = self.origen_audio  # lista 'Music' o carpeta, según desde dónde se abrió
         elif self.estado in ("video", "foto", "documento"):
-            self.estado = "carpeta"
-            self.foto = None
+            self.estado = self.origen_contenido
+            if self.estado == "carpeta" and self.carpeta is None:
+                self.estado = "menu"
         elif self.estado == "carpeta" and self.carpeta != self.raiz:
             self.carpeta = self.carpeta.parent
             self.pagina = 0
@@ -611,6 +864,7 @@ class Menu:
         self.sucio = True
 
     def abrir(self, path):
+        path = Path(path)
         try:
             raices = ([self.raiz / s for s in self.subcarpetas] if self.subcarpetas
                       else [self.raiz])
@@ -626,9 +880,12 @@ class Menu:
                 finally:
                     self.vista = Vista()
                     self.actualizar()
-            elif path.suffix.lower() in {".pdf", ".epub"}:
-                self.documento = LectorDocumento(path)
+            elif path.suffix.lower() in LIBRO_EXT:
+                tam = interfaz_libros.tam_pagina(self.vista.pantalla.get_size())
+                self.documento = LectorDocumento(path, size=tam)
                 self.pagina_documento = self.documento.render()
+                self.doc_arrastre = (0.0, 0.0)
+                self.origen_contenido = "carpeta"
                 self.estado = "documento"
                 self.nombre = path.name
             elif path.suffix.lower() in VIDEO_EXT | AUDIO_EXT:
@@ -642,19 +899,20 @@ class Menu:
                     self.pista_actual = self._pista(path)
                     self.letra_scroll, self.letra_vel = 0.0, 0.0
                     self.letra_tocada = -10 ** 9
+                else:
+                    self.origen_contenido = "carpeta"
                 self.estado = "audio" if es_audio else "video"
                 self.pausa = False
                 self.silencio = False
+                self.panel_video = False
                 self.posicion, self.duracion = 0.0, None
                 self.nombre = path.name
                 self.mostrar_controles()
             elif path.suffix.lower() in FOTO_EXT:
-                foto = pygame.image.load(str(path)).convert()
-                w, h = foto.get_size()
-                escala = min(760 / w, 450 / h)
-                self.foto = pygame.transform.smoothscale(foto, (max(1, round(w * escala)), max(1, round(h * escala))))
-                self.nombre = path.name
-                self.estado = "foto"
+                if path not in self.lista_fotos:
+                    self.lista_fotos = [path]
+                self.abrir_foto(self.lista_fotos.index(path))
+                self.origen_contenido = "carpeta"
             else:
                 self.aviso = f"{path.name}: {path.stat().st_size:,} bytes. Visor pendiente."
         except Exception as error:
@@ -664,6 +922,25 @@ class Menu:
             print("Error al abrir:", error, flush=True)
         self.sucio = True
 
+    def accion_documento(self, accion):
+        try:
+            if accion == "doc_anterior":
+                self.documento.mover_pagina(-1)
+            elif accion == "doc_siguiente":
+                self.documento.mover_pagina(1)
+            elif accion in ("doc_mas", "doc_menos"):
+                paso = 2 / 22 if self.documento.doc.is_reflowable else .5
+                self.documento.ampliar(paso if accion == "doc_mas" else -paso)
+            elif accion != "doc_pagina":
+                dx, dy = {"doc_izq": (-90, 0), "doc_der": (90, 0),
+                          "doc_arriba": (0, -90), "doc_abajo": (0, 90)}[accion]
+                self.documento.desplazar(dx, dy)
+            self.pagina_documento = self.documento.render()
+        except Exception as error:
+            self.volver()
+            self.aviso = "No se pudo leer la página: " + str(error)
+            self.avisar_inicio(self.aviso, 4000)
+
     def accion(self, accion):
         self.sucio = True
         if isinstance(accion, Path):
@@ -672,23 +949,46 @@ class Menu:
             self.abrir_juegos()
         elif accion == "Audio":
             self.abrir_musica()
+        elif accion == "Vídeos":
+            self.abrir_videos()
+        elif accion == "Imágenes":
+            self.abrir_imagenes()
+        elif accion == "Libros":
+            self.abrir_libros()
         elif isinstance(accion, tuple) and accion[0] == "pista":
             self.reproducir_pista(accion[1])
-        elif accion in ("musica_izq", "musica_der"):
-            self.girar(-1 if accion == "musica_izq" else 1)
+        elif isinstance(accion, tuple) and accion[0] == "video":
+            self.abrir_desde("videos", self.lista_videos[accion[1]])
+        elif isinstance(accion, tuple) and accion[0] == "libro":
+            self.abrir_desde("libros", self.lista_libros[accion[1]])
+        elif isinstance(accion, tuple) and accion[0] == "foto":
+            self.abrir_foto(accion[1])
+        elif isinstance(accion, tuple) and accion[0] == "foto_ir":
+            self.foto_indice = accion[1]
+            self.foto_desplazamiento = 0.0
+        elif accion == "foto_borrar":
+            self.borrar_foto()
+        elif accion in ("musica_izq", "juegos_izq", "libros_izq", "carrusel_izq"):
+            self.girar(-1)
+        elif accion in ("musica_der", "juegos_der", "libros_der", "carrusel_der"):
+            self.girar(1)
         elif accion in ("audio_anterior", "audio_siguiente") and self.player:
             self.pista_contigua(-1 if accion == "audio_anterior" else 1)
         elif isinstance(accion, tuple) and accion[0] == "juego":
             self.lanzar_juego(accion[1])
-        elif accion in ("juegos_izq", "juegos_der"):
-            self.girar(-1 if accion == "juegos_izq" else 1)
         elif isinstance(accion, tuple) and accion[0] == "red":
-            # Conectarse a otra red necesitaría pedir la contraseña: no está en el diseño.
-            red = next((r for r in self.redes or [] if r["ssid"] == accion[1]), None)
-            if red and red["conectada"]:
-                self.avisar_inicio(f"Conectado a {red['ssid']}  ·  IP {direccion_ip()}", 4000)
-            else:
-                self.avisar_inicio("Conectarse a otra red: próximamente", 2500)
+            self.tocar_red(accion[1])
+        elif isinstance(accion, tuple) and accion[0] == "tecla":
+            self.tecla(accion[1])
+        elif isinstance(accion, tuple) and accion[0] == "fondo_elegir":
+            i = accion[1]
+            self.fondo.elegir(self.lista_fondos[i] if 0 <= i < len(self.lista_fondos) else None)
+        elif accion == "fondo_restablecer":
+            self.fondo.restablecer()
+        elif accion == "salir_terminal":
+            # El servicio no se reinicia al salir bien y vuelve a la consola (chvt 1).
+            if self.confirmado(accion, "salir a la terminal"):
+                self.ejecutando = False
         elif accion in CARPETAS:
             self.categoria = accion
             sub = CARPETAS[accion]
@@ -697,8 +997,6 @@ class Menu:
             self.pagina = 0
             self.estado = "carpeta"
             self.actualizar()
-        elif accion in ("carrusel_izq", "carrusel_der"):
-            self.girar(-1 if accion == "carrusel_izq" else 1)
         elif accion == "panel":
             self.abrir_panel()
         elif accion == "energia":
@@ -724,22 +1022,7 @@ class Menu:
             self.cerrar_contenido()
             self.estado = "menu"
         elif isinstance(accion, str) and accion.startswith("doc_") and self.documento:
-            try:
-                if accion == "doc_anterior":
-                    self.documento.mover_pagina(-1)
-                elif accion == "doc_siguiente":
-                    self.documento.mover_pagina(1)
-                elif accion in ("doc_mas", "doc_menos"):
-                    paso = 2 / 22 if self.documento.doc.is_reflowable else .5
-                    self.documento.ampliar(paso if accion == "doc_mas" else -paso)
-                else:
-                    dx, dy = {"doc_izq": (-90, 0), "doc_der": (90, 0),
-                              "doc_arriba": (0, -90), "doc_abajo": (0, 90)}[accion]
-                    self.documento.desplazar(dx, dy)
-                self.pagina_documento = self.documento.render()
-            except Exception as error:
-                self.volver()
-                self.aviso = "No se pudo leer la página: " + str(error)
+            self.accion_documento(accion)
         elif accion == "volver":
             self.volver()
         elif accion == "actualizar":
@@ -750,10 +1033,14 @@ class Menu:
             self.pagina = min(max(0, (len(self.archivos) - 1) // POR_PAGINA), self.pagina + 1)
         elif accion == "mostrar" and self.player:
             self.mostrar_controles()
+        elif accion == "ajustes_video" and self.player:
+            self.panel_video = not self.panel_video
+            self.mostrar_controles()
         elif accion == "controles" and self.player:
             # Tocar el vídeo muestra los controles; si ya se ven, los oculta.
             if self.controles_visibles() and self.estado == "video" and not self.pausa:
                 self.controles_hasta = 0
+                self.panel_video = False
             else:
                 self.mostrar_controles()
         elif (accion in ("pausa", "retroceder", "adelantar", "vol_menos", "vol_mas", "silenciar")
@@ -780,147 +1067,134 @@ class Menu:
                 self.volver()
                 self.aviso = "Error de reproducción: " + str(error)
 
-    def dibujar_reproductor(self):
-        """Vídeo/audio a pantalla completa con controles superpuestos (estilo YouTube)."""
-        v = self.vista
-        sup = v.completo                     # resolución real de la pantalla
-        w, h = sup.get_size()
-        sup.fill((0, 0, 0))
-        if self.estado == "video":
-            sup.blit(self.player.surface, self.player.surface.get_rect(center=(w // 2, h // 2)))
-        else:
-            iv.nota(sup, (w // 2, h // 2 - 50), 70)
-            v.texto(self.nombre, (w // 2, h // 2 + 60), w - 100, sup=sup)
-        self.controles_dibujados = self.controles_visibles()
-        if self.controles_dibujados:
-            sup.blit(v.degradado_sup, (0, 0))
-            sup.blit(v.degradado_inf, (0, h - v.degradado_inf.get_height()))
-            # Arriba: volver, título e inicio.
-            iv.atras(sup, (36, 36))
-            v.zona((0, 0, 72, 72), "volver")
-            v.texto(self.nombre, (76, 36), w - 160, izquierda=True, sup=sup)
-            iv.inicio(sup, (w - 36, 36))
-            v.zona((w - 72, 0, 72, 72), "inicio")
-            if self.estado == "video" and self.pausa:
-                iv.boton_central(sup, (w // 2, h // 2), en_pausa=True)
-                v.zona((w // 2 - 60, h // 2 - 60, 120, 120), "pausa")
-            # Barra de progreso: se toca o se arrastra; zona alta y de todo el ancho.
-            progreso = pygame.Rect(20, h - 66, w - 40, 5)
-            fraccion = self.posicion / self.duracion if self.duracion else 0
-            arrastrando = self.arrastre is not None and self.arrastre[0] == "buscar"
-            iv.barra(sup, progreso, fraccion, perilla=11 if arrastrando else 7)
-            v.zona((0, h - 98, w, 48), ("buscar", progreso))
-            # Fila inferior.
-            y = h - 26
-            (iv.play if self.pausa else iv.pausa)(sup, (40, y), 13)
-            v.zona((8, h - 50, 64, 50), "pausa")
-            iv.saltar(sup, (102, y), v.fuente_peq, adelante=False)
-            v.zona((72, h - 50, 60, 50), "retroceder")
-            iv.saltar(sup, (160, y), v.fuente_peq, adelante=True)
-            v.zona((132, h - 50, 58, 50), "adelantar")
-            iv.volumen(sup, (222, y), self.volumen, self.silencio)
-            v.zona((192, h - 50, 52, 50), "silenciar")
-            volumen = pygame.Rect(256, y - 2, 140, 4)
-            iv.barra(sup, volumen, 0 if self.silencio else self.volumen / 100,
-                     color=iv.BLANCO, perilla=11 if self.arrastre and self.arrastre[0] == "volumen" else 7)
-            v.zona((244, h - 50, 168, 50), ("volumen", volumen))
-            tiempo = f"{iv.formato_tiempo(self.posicion)} / {iv.formato_tiempo(self.duracion)}"
-            v.texto(tiempo, (424, y), 300, izquierda=True, sup=sup)
-            # Un toque que falla por poco en la franja de controles no los esconde.
-            v.zona((0, h - 98, w, 98), "mostrar")
-            v.zona((0, 0, w, 72), "mostrar")
-        # Toque en cualquier otro punto: mostrar u ocultar los controles.
-        v.zona(sup.get_rect(), "controles")
+    # --- dibujo ----------------------------------------------------------------------------
+    def _pulsado(self):
+        """Acción que el dedo está pulsando (sin arrastrar), para pintarla pulsada."""
+        if self.toque is not None and not self.toque["arrastre"]:
+            return self.toque["accion"]
+        return None
 
     def dibujar(self):
         v = self.vista
         v.lienzo.fill(FONDO)
         v.botones = []
-        v.modo_completo = (self.estado in ("menu", "ajustes", "redes", "juegos", "musica", "reposo") or
-                           self.estado in ("video", "audio") and self.player is not None)
-        if self.estado in ("menu", "ajustes"):
+        v.modo_completo = self.estado != "carpeta"
+        if self.estado in CON_BARRA:
             self.hora_pintada = time.strftime("%H:%M")
-        if self.estado == "menu":
-            # Pantalla de Inicio del wireframe, a la resolución real de la pantalla.
-            v.inicio.dibujar(v.completo, self.carrusel, v.zona, self.aviso_inicio,
-                             self.hora_pintada, self.panel, self.captura)
-        elif self.estado == "ajustes":
-            pulsando = self.toque is not None and not self.toque["arrastre"]
-            moviendo = (self.ajustes_vel != 0 or
-                        self.toque is not None and self.toque["arrastre"])
-            v.ajustes.dibujar(v.completo, self.ajustes_scroll, self.energia, v.zona,
-                              self.aviso_inicio, self.hora_pintada, self.valores_ajustes(),
-                              resaltado=self.toque["accion"] if pulsando else None,
-                              tocable=not moviendo)
-        elif self.estado == "juegos":
-            arrastrando = self.toque is not None and self.toque["arrastre"]
-            v.juegos.dibujar(v.completo, self.lista_juegos, self.juegos_pos, v.zona,
-                             self.aviso_inicio, tocable=not arrastrando)
-        elif self.estado == "redes":
-            moviendo = (self.redes_vel != 0 or
-                        self.toque is not None and self.toque["arrastre"])
-            v.redes.dibujar(v.completo, self.redes, self.redes_scroll, v.zona, self.aviso_inicio,
-                            tocable=not moviendo)
-        elif self.estado == "musica":
-            arrastrando = self.toque is not None and self.toque["arrastre"]
-            v.musica.dibujar(v.completo, self.pistas, self.musica_pos, v.zona,
-                             self.aviso_inicio, tocable=not arrastrando)
-        elif self.estado == "reposo":
-            v.completo.fill((0, 0, 0))
-        elif self.estado == "audio" and self.player is not None:
-            # Reproductor de audio del wireframe (frame 13).
-            v.audio.dibujar(v.completo, self.pista_actual, self.posicion, self.duracion,
-                            self.pausa, self.letra_scroll, v.zona, self.aviso_inicio)
+        hora, pulsado, sup = self.hora_pintada, self._pulsado(), v.completo
+        arrastrando = self.toque is not None and self.toque["arrastre"]
+        aviso = self.aviso_inicio
+        e = self.estado
+        if e == "menu":
+            v.inicio.dibujar(sup, self.carrusel, v.zona, aviso, hora, self.panel, self.captura,
+                             fondo=self.fondo.superficie(), pulsado=pulsado)
+        elif e == "fondo":
+            elegido = (self.lista_fondos.index(self.fondo.ruta)
+                       if self.fondo.ruta in self.lista_fondos else -1)
+            v.fondos.dibujar(sup, self.fondo, self.lista_fondos, elegido, self.fondo_scroll,
+                             v.zona, aviso, resaltado=pulsado,
+                             tocable=not arrastrando and self.fondo_vel == 0, hora=hora)
+        elif e == "ajustes":
+            moviendo = self.ajustes_vel != 0 or arrastrando
+            v.ajustes.dibujar(sup, self.ajustes_scroll, self.energia, v.zona, aviso, hora,
+                              self.valores_ajustes(), resaltado=pulsado, tocable=not moviendo)
+        elif e == "juegos":
+            v.juegos.dibujar(sup, self.lista_juegos, self.juegos_pos, v.zona, aviso,
+                             tocable=not arrastrando, hora=hora, resaltado=pulsado)
+        elif e == "redes":
+            moviendo = self.redes_vel != 0 or arrastrando
+            v.redes.dibujar(sup, self.redes, self.redes_scroll, v.zona, aviso,
+                            tocable=not moviendo, hora=hora, resaltado=pulsado)
+        elif e == "musica":
+            v.musica.dibujar(sup, self.pistas, self.musica_pos, v.zona, aviso,
+                             tocable=not arrastrando, hora=hora, resaltado=pulsado)
+        elif e == "clave":
+            v.clave.dibujar(sup, self.clave_red["ssid"], self.clave, self.clave_ver,
+                            self.clave_mayus, self.clave_simbolos, v.zona, aviso,
+                            resaltado=pulsado, ocupado=self.conectando is not None, hora=hora)
+        elif e == "videos":
+            duracion = lambda ruta: (iv.formato_tiempo(d) if (d := self.miniaturas.duracion(ruta)) else None)
+            v.videos.dibujar(sup, self.lista_videos, self.videos_pos, self.miniaturas, v.zona, "video",
+                             aviso, tocable=not arrastrando, hora=hora, resaltado=pulsado,
+                             subtitulo=duracion, vacio="No hay vídeos en recursos/videos")
+        elif e == "imagenes":
+            v.imagenes.dibujar(sup, self.lista_fotos, self.fotos_pos, self.miniaturas, v.zona, "foto",
+                               aviso, tocable=not arrastrando, hora=hora, resaltado=pulsado,
+                               vacio="No hay imágenes en recursos/imagenes")
+        elif e == "libros":
+            v.libros.dibujar(sup, self.lista_libros, self.libros_pos, self.miniaturas, v.zona, aviso,
+                             hora=hora, resaltado=pulsado)
+        elif e == "foto":
+            v.visor.dibujar(sup, self.lista_fotos, self.foto_indice, self.miniaturas, v.zona, aviso,
+                            resaltado=pulsado, desplazamiento=self.foto_desplazamiento)
+        elif e == "documento" and self.documento:
+            d = self.documento
+            indicador = f"{d.pagina + 1} / {d.total}"
+            if d.doc.is_reflowable:
+                indicador = f"Cap. {d.capitulo + 1} · " + indicador
+            hay_anterior = d.pagina > 0 or d.capitulo > 0
+            hay_siguiente = (d.pagina + 1 < d.total or
+                             (d.doc.is_reflowable and d.capitulo + 1 < d.doc.chapter_count))
+            pagina = self.pagina_documento
+            if self.doc_arrastre != (0.0, 0.0) and pagina is not None:
+                movida = pygame.Surface(pagina.get_size()).convert()
+                movida.fill((255, 255, 255))
+                movida.blit(pagina, (round(self.doc_arrastre[0]), round(self.doc_arrastre[1])))
+                pagina = movida
+            v.lector.dibujar(sup, pagina, indicador, (d.pagina + 1) / max(1, d.total), hay_anterior,
+                             hay_siguiente, v.zona, aviso, resaltado=pulsado)
+        elif e == "reposo":
+            sup.fill((0, 0, 0))
+        elif e == "audio" and self.player is not None:
+            v.audio.dibujar(sup, self.pista_actual, self.posicion, self.duracion, self.pausa,
+                            self.letra_scroll, v.zona, aviso, hora=hora, resaltado=pulsado)
             self.controles_dibujados = True       # siempre visibles: no hay que ocultarlos
-        elif v.modo_completo:
-            self.dibujar_reproductor()
+        elif e == "video" and self.player is not None:
+            self.controles_dibujados = self.controles_visibles()
+            v.video.dibujar(sup, self.player.surface, self.posicion, self.duracion, self.pausa,
+                            self.controles_dibujados, self.panel_video, self.volumen, self.silencio,
+                            v.zona, aviso, resaltado=pulsado)
+        elif e == "carpeta":
+            self.dibujar_carpeta()
         else:
-            v.boton("Volver", (16, 16, 120, 56), "volver")
-            v.boton("Inicio", (148, 16, 112, 56), "inicio")
-            if self.estado == "carpeta":
-                v.texto(self.categoria, (440, 44), 280)
-                v.boton("Actualizar", (624, 16, 160, 56), "actualizar")
-                v.texto(str(self.carpeta.relative_to(BASE)), (400, 96))
-                inicio = self.pagina * POR_PAGINA
-                for i, path in enumerate(self.archivos[inicio:inicio + POR_PAGINA]):
-                    etiqueta = ("[Carpeta] " if path.is_dir() else "") + path.name
-                    v.boton(etiqueta, (24, 122 + i * 72, 752, 62), path)
-                if not self.archivos:
-                    v.texto("Esta carpeta esta vacia", (400, 285))
-                v.texto(self.aviso, (400, 500))
-                paginas = max(1, (len(self.archivos) + POR_PAGINA - 1) // POR_PAGINA)
-                v.texto(f"{self.pagina + 1} / {paginas}", (400, 555))
-                if self.pagina:
-                    v.boton("Anterior", (24, 526, 170, 56), "anterior")
-                if self.pagina + 1 < paginas:
-                    v.boton("Siguiente", (606, 526, 170, 56), "siguiente")
-            else:
-                v.texto(self.nombre, (535, 44), 480)
-                if self.estado == "documento" and self.documento:
-                    v.lienzo.blit(self.pagina_documento, (20, 82))
-                    controles = [
-                        ("Zoom -", "doc_menos"), ("Zoom +", "doc_mas"),
-                        ("Izq.", "doc_izq"), ("Der.", "doc_der"),
-                        ("Arriba", "doc_arriba"), ("Abajo", "doc_abajo")]
-                    if self.documento.doc.is_reflowable:
-                        controles = [("Letra -", "doc_menos"), ("Letra +", "doc_mas")]
-                    for i, (label, accion) in enumerate(controles):
-                        v.boton(label, (20 + i * 128, 480, 120, 50), accion)
-                    if self.documento.pagina > 0 or self.documento.capitulo > 0:
-                        v.boton("Anterior", (20, 540, 165, 52), "doc_anterior")
-                    indicador = f"{self.documento.pagina + 1} / {self.documento.total}"
-                    if self.documento.doc.is_reflowable:
-                        indicador = f"Cap. {self.documento.capitulo + 1} · " + indicador
-                    v.texto(indicador, (400, 566), 270)
-                    if (self.documento.pagina + 1 < self.documento.total or
-                            (self.documento.doc.is_reflowable and
-                             self.documento.capitulo + 1 < self.documento.doc.chapter_count)):
-                        v.boton("Siguiente", (615, 540, 165, 52), "doc_siguiente")
-                elif self.foto:
-                    v.lienzo.blit(self.foto, self.foto.get_rect(center=(400, 310)))
+            v.modo_completo = True
+            sup.fill((0, 0, 0))
         v.preparar()
+        # Tornar, en la esquina de la pantalla real (también sobre el explorador antiguo).
+        rect = self.tornar_visible()
+        if rect is not None:
+            boton = v.tornar(rect)
+            boton.dibujar(v.completo if v.modo_completo else v.cache, self.atras_pulsado)
+            v.atras = boton
+        else:
+            v.atras = None
         self.sucio = False
 
+    def dibujar_carpeta(self):
+        """Explorador antiguo (lienzo 800x600); solo se llega desde pruebas o enlaces raros."""
+        v = self.vista
+        v.texto(self.categoria, (440, 44), 280)
+        v.boton("Actualizar", (624, 16, 160, 56), "actualizar")
+        try:
+            ruta = str(self.carpeta.relative_to(BASE))
+        except (ValueError, AttributeError):
+            ruta = str(self.carpeta or "")
+        v.texto(ruta, (400, 96))
+        inicio = self.pagina * POR_PAGINA
+        for i, path in enumerate(self.archivos[inicio:inicio + POR_PAGINA]):
+            etiqueta = ("[Carpeta] " if path.is_dir() else "") + path.name
+            v.boton(etiqueta, (24, 122 + i * 72, 752, 62), path)
+        if not self.archivos:
+            v.texto("Esta carpeta esta vacia", (400, 285))
+        v.texto(self.aviso, (400, 500))
+        paginas = max(1, (len(self.archivos) + POR_PAGINA - 1) // POR_PAGINA)
+        v.texto(f"{self.pagina + 1} / {paginas}", (400, 555))
+        if self.pagina:
+            v.boton("Anterior", (24, 526, 170, 56), "anterior")
+        if self.pagina + 1 < paginas:
+            v.boton("Siguiente", (606, 526, 170, 56), "siguiente")
+
+    # --- eventos ---------------------------------------------------------------------------
     def evento(self, evento):
         if self.estado == "reposo":
             # Cualquier toque o tecla despierta, sin activar nada debajo.
@@ -933,27 +1207,12 @@ class Menu:
             return
         if self.panel and evento.type != pygame.QUIT:
             return       # el círculo de la barra está creciendo o encogiendo
+        if self.evento_atras(evento):
+            return
         if evento.type == pygame.QUIT:
             self.accion("salir" if self.estado == "menu" else "volver")
         elif evento.type == pygame.KEYDOWN:
-            if evento.key == pygame.K_ESCAPE:
-                self.accion("salir" if self.estado == "menu" else "volver")
-            elif self.estado == "redes" and evento.key in (pygame.K_UP, pygame.K_DOWN):
-                self.desplazar_redes(-1 if evento.key == pygame.K_UP else 1)
-            elif self.estado in ("menu", "juegos", "musica") and evento.key in (
-                    pygame.K_LEFT, pygame.K_RIGHT):
-                self.girar(-1 if evento.key == pygame.K_LEFT else 1)
-            elif self.estado == "menu" and evento.key in (
-                    pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                self.accion(self.seccion_central())
-            elif self.documento and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                self.accion("doc_anterior" if evento.key == pygame.K_LEFT else "doc_siguiente")
-            elif evento.key == pygame.K_SPACE and self.player:
-                self.accion("pausa")
-            elif self.player and evento.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                self.accion("retroceder" if evento.key == pygame.K_LEFT else "adelantar")
-            elif self.player and evento.key == pygame.K_m:
-                self.accion("silenciar")
+            self.tecla_fisica(evento)
         elif self.arrastre:                  # barra deslizante (progreso, volumen) cogida
             if evento.type in MOVER:
                 pos = self.vista.posicion(evento, MOVER)
@@ -961,32 +1220,72 @@ class Menu:
                     self.arrastrar(pos)
             elif evento.type in SOLTAR:
                 self.soltar(self.vista.posicion(evento, SOLTAR))
-        elif self.estado in ("menu", "ajustes", "redes", "juegos", "musica", "audio"):
+        elif self.estado in TACTILES:
             self.evento_inicio(evento)
         else:
             pos = self.vista.posicion(evento)
             if pos is not None:
                 for rect, accion in self.vista.botones:
                     if rect.collidepoint(pos):
-                        if isinstance(accion, tuple):
-                            # Barra deslizante: sigue al dedo hasta que se suelta.
-                            self.arrastre = accion
-                            self.arrastrar(pos)
-                        else:
-                            self.accion(accion)
+                        self.accion(accion)
                         break
 
+    def tecla_fisica(self, evento):
+        k, e = evento.key, self.estado
+        izq_der = k in (pygame.K_LEFT, pygame.K_RIGHT)
+        paso = -1 if k == pygame.K_LEFT else 1
+        if k == pygame.K_ESCAPE:
+            self.accion("salir" if e == "menu" else "volver")
+        elif e == "clave":                   # teclado físico en la contraseña
+            if k == pygame.K_BACKSPACE:
+                self.tecla("borrar")
+            elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.tecla("conectar")
+            elif evento.unicode and evento.unicode.isprintable():
+                if not self.conectando and len(self.clave) < interfaz_teclado.LARGO_MAXIMO:
+                    self.clave += evento.unicode
+                    self.sucio = True
+        elif e == "redes" and k in (pygame.K_UP, pygame.K_DOWN):
+            self.desplazar_redes(-1 if k == pygame.K_UP else 1)
+        elif e in ("menu", "libros") + PAGINADAS and izq_der:
+            self.girar(paso)
+        elif e == "menu" and k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+            self.accion(self.seccion_central())
+        elif e == "libros" and k in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.lista_libros:
+            self.accion(("libro", round(self.libros_destino)))
+        elif e == "foto" and izq_der:
+            self.pasar_foto(paso)
+        elif self.documento and izq_der:
+            self.accion("doc_anterior" if k == pygame.K_LEFT else "doc_siguiente")
+        elif k == pygame.K_SPACE and self.player:
+            self.accion("pausa")
+        elif self.player and izq_der:
+            self.accion("retroceder" if k == pygame.K_LEFT else "adelantar")
+        elif self.player and k == pygame.K_m:
+            self.accion("silenciar")
+
+    def pasar_foto(self, paso):
+        nuevo = self.foto_indice + paso
+        if 0 <= nuevo < len(self.lista_fotos):
+            self.foto_indice = nuevo
+            self.foto_desplazamiento = -paso * self.vista.pantalla.get_width() * .25
+        self.sucio = True
+
     def _carrusel_activo(self):
-        if self.estado == "juegos":
-            return "juegos_pos", "juegos_destino"
-        if self.estado == "musica":
-            return "musica_pos", "musica_destino"
-        return "carrusel", "carrusel_destino"
+        return {"juegos": ("juegos_pos", "juegos_destino"), "musica": ("musica_pos", "musica_destino"),
+                "videos": ("videos_pos", "videos_destino"), "imagenes": ("fotos_pos", "fotos_destino"),
+                "libros": ("libros_pos", "libros_destino")}.get(self.estado, ("carrusel", "carrusel_destino"))
 
     def _ultima_pagina(self):
-        """Última página de la pantalla paginada visible (Games o Music)."""
+        """Última página (o último libro) de la pantalla visible."""
         if self.estado == "musica":
             return max(1, -(-len(self.pistas) // interfaz_musica.PantallaMusica.POR_PAGINA)) - 1
+        if self.estado == "videos":
+            return interfaz_videos.paginas(len(self.lista_videos)) - 1
+        if self.estado == "imagenes":
+            return interfaz_videos.paginas(len(self.lista_fotos)) - 1
+        if self.estado == "libros":
+            return max(0, len(self.lista_libros) - 1)
         return interfaz_juegos.paginas(len(self.lista_juegos)) - 1
 
     def _vertical(self):
@@ -995,19 +1294,22 @@ class Menu:
             return "redes_scroll", "redes_vel", self.redes_maximo()
         if self.estado == "ajustes":
             return "ajustes_scroll", "ajustes_vel", self.vista.ajustes.maximo(self.energia)
+        if self.estado == "fondo":
+            return "fondo_scroll", "fondo_vel", self.vista.fondos.maximo(len(self.lista_fondos))
         if self.estado == "audio" and self.pista_actual is not None:
             return "letra_scroll", "letra_vel", self.vista.audio.letra_maximo(self.pista_actual)
         return None
 
     def evento_inicio(self, evento):
-        """Pantallas táctiles nuevas. Un toque actúa al soltar; al arrastrar, los carruseles
-        y páginas (horizontal) o las listas (vertical: redes, letra) siguen al dedo, y al
-        soltar continúan con su velocidad: se recolocan o frenan por inercia."""
+        """Pantallas táctiles. Un toque actúa al soltar (mientras, se ve pulsado); al
+        arrastrar, carruseles y páginas (horizontal) o listas (vertical) siguen al dedo
+        y al soltar continúan con su velocidad: se recolocan o frenan por inercia."""
         pos = self.vista.posicion(evento)
         if pos is not None:
             accion = next((a for r, a in self.vista.botones if r.collidepoint(pos)), None)
-            if isinstance(accion, tuple) and accion[0] in ("buscar", "volumen") and self.player:
-                self.arrastre = accion           # barra de progreso: la sigue el dedo
+            if isinstance(accion, tuple) and (accion[0] in ("buscar", "volumen") and self.player
+                                              or accion[0] in ("fondo_h", "fondo_s", "fondo_v")):
+                self.arrastre = accion           # barra: la sigue el dedo
                 self.arrastrar(pos)
                 return
             vertical = self._vertical()
@@ -1018,8 +1320,7 @@ class Menu:
                 base = getattr(self, self._carrusel_activo()[0])
             self.toque = {"inicio": pos, "accion": accion, "arrastre": False, "base": base,
                           "muestras": [(tiempo.ms(), pos)]}
-            if self.estado == "ajustes":
-                self.sucio = True                # la fila tocada se resalta mientras se pulsa
+            self.sucio = True                    # lo tocado se ve pulsado mientras dura
         elif self.toque and evento.type in MOVER:
             p = self.vista.posicion(evento, MOVER)
             if p is not None:
@@ -1035,38 +1336,58 @@ class Menu:
         dx, dy = p[0] - t["inicio"][0], p[1] - t["inicio"][1]
         t["muestras"] = (t["muestras"] + [(tiempo.ms(), p)])[-6:]
         vertical = self._vertical()
+        e = self.estado
         if not t["arrastre"]:
             umbral = 10
             if vertical:
-                # En el reproductor solo se arrastra la letra (no el resto de la pantalla).
-                t["arrastre"] = abs(dy) > umbral and (self.estado != "audio" or t["accion"] == "letra")
-            elif self.estado in ("menu", "juegos", "musica"):
+                # En el reproductor solo se arrastra la letra; en el fondo, solo la lista.
+                t["arrastre"] = abs(dy) > umbral and (
+                    e == "audio" and t["accion"] == "letra" or
+                    e == "fondo" and t["inicio"][0] >= self.vista.fondos.esc.p((interfaz_fondo.LISTA_X, 0))[0] or
+                    e not in ("audio", "fondo"))
+            elif e in ("menu", "libros", "foto") + PAGINADAS:
                 t["arrastre"] = abs(dx) > umbral
+            elif e == "documento" and t["accion"] == "doc_pagina":
+                t["arrastre"] = math.hypot(dx, dy) > umbral
             if not t["arrastre"]:
                 return
+            self.sucio = True                    # deja de verse pulsado
         if vertical:
             # El contenido sigue al dedo; fuera de los límites se resiste (elástico).
             scroll, _, maximo = vertical
             s = t["base"] - dy / self.k_diseno()
             limite = min(max(s, 0), maximo)
             setattr(self, scroll, limite + (s - limite) * .35)
-            if self.estado == "audio":
+            if e == "audio":
                 self.letra_tocada = tiempo.ms()
+        elif e == "foto":
+            fuera = ((self.foto_indice == 0 and dx > 0) or
+                     (self.foto_indice == len(self.lista_fotos) - 1 and dx < 0))
+            self.foto_desplazamiento = dx * (.35 if fuera else 1)
+        elif e == "documento":
+            if self.documento and self.documento.ampliado:
+                self.doc_arrastre = (dx, dy)           # la página ampliada se mueve
+            else:
+                self.doc_arrastre = (dx * .5, 0.0)     # un poco, para notar el gesto
         else:
             actual, destino = self._carrusel_activo()
-            if self.estado in ("juegos", "musica"):
+            if e in PAGINADAS:
                 # Páginas: una pantalla de ancho; en los extremos, elástico.
-                p = t["base"] - dx / self.vista.pantalla.get_width()
-                limite = min(max(p, 0), self._ultima_pagina())
-                setattr(self, actual, limite + (p - limite) * .35)
+                pos = t["base"] - dx / self.vista.pantalla.get_width()
+            elif e == "libros":
+                pos = t["base"] - dx / (interfaz_libros.SEPARACION * self.k_diseno())
             else:
-                separacion = interfaz_inicio.SEPARACION * self.k_diseno()
-                setattr(self, actual, t["base"] - dx / separacion)
-            setattr(self, destino, getattr(self, actual))
+                pos = t["base"] - dx / (interfaz_inicio.SEPARACION * self.k_diseno())
+            if e != "menu":
+                limite = min(max(pos, 0), self._ultima_pagina())
+                pos = limite + (pos - limite) * .35
+            setattr(self, actual, pos)
+            setattr(self, destino, pos)
         self.sucio = True
 
     def soltar_toque(self):
         t, self.toque = self.toque, None
+        self.sucio = True
         if not t["arrastre"]:
             if t["accion"]:
                 self.accion(t["accion"])
@@ -1077,23 +1398,39 @@ class Menu:
                             t["muestras"][0])
         dt = max(16, fin_t - ini_t) / 1000
         vx, vy = (fin_p[0] - ini_p[0]) / dt, (fin_p[1] - ini_p[1]) / dt
+        dx = fin_p[0] - t["inicio"][0]
+        dy = fin_p[1] - t["inicio"][1]
+        rapido = abs(dx) > 50 or abs(vx) > 400
         vertical = self._vertical()
+        e = self.estado
         if vertical:
             setattr(self, vertical[1], max(-6000, min(6000, -vy / self.k_diseno())))
-            if self.estado == "audio":
+            if e == "audio":
                 self.letra_tocada = tiempo.ms()
+        elif e == "foto":
+            if rapido and abs(dx) > abs(dy):
+                paso = 1 if dx < 0 else -1
+                if 0 <= self.foto_indice + paso < len(self.lista_fotos):
+                    self.foto_indice += paso
+                    self.foto_desplazamiento = dx + paso * self.vista.pantalla.get_width() * .5
+        elif e == "documento" and self.documento:
+            arrastre, self.doc_arrastre = self.doc_arrastre, (0.0, 0.0)
+            if self.documento.ampliado:
+                self.documento.arrastrar(*arrastre)
+                self.accion_documento("doc_pagina")
+            elif rapido and abs(dx) > abs(dy):
+                self.accion_documento("doc_siguiente" if dx < 0 else "doc_anterior")
         else:
             actual, destino = self._carrusel_activo()
             pos, base = getattr(self, actual), round(t["base"])
             objetivo = round(pos)
-            dx = fin_p[0] - t["inicio"][0]
-            if objetivo == base and (abs(dx) > 50 or abs(vx) > 400):
+            if objetivo == base and rapido:
                 objetivo = base + (1 if dx < 0 else -1)   # un gesto corto basta para pasar
-            if self.estado in ("juegos", "musica"):
+            if e != "menu":
                 objetivo = max(0, min(self._ultima_pagina(), objetivo))
             setattr(self, destino, float(objetivo))
-        self.sucio = True
 
+    # --- bucle -----------------------------------------------------------------------------
     def run(self):
         reloj = tiempo.Reloj()
         self.dibujar()
@@ -1114,8 +1451,9 @@ class Menu:
                         presentar = True
                 if not self.ejecutando:
                     break
-                if (self.estado in ("menu", "ajustes", "redes", "juegos", "musica", "audio")
-                        and self.animar_inicio()):
+                if self.estado in TACTILES and self.animar_inicio():
+                    self.sucio = True
+                if self.animar_fondo():                  # GIF/MP4 de fondo o imagen ya cargada
                     self.sucio = True
                 if self.player:
                     try:
@@ -1130,7 +1468,7 @@ class Menu:
                             aviso = self.player.error
                             self.volver()
                             self.aviso = aviso
-                            if aviso and self.estado == "musica":
+                            if aviso:
                                 self.avisar_inicio(aviso, 4000)
                         else:
                             self.consultar_tiempo()
@@ -1151,6 +1489,19 @@ class Menu:
                 reloj.tick(60)
         finally:
             self.cerrar_contenido()
+            self.fondo.cerrar()
+
+    def animar_fondo(self):
+        """Fondo de pantalla: solo corre (GIF/MP4) mientras se ve; True si hay que repintar."""
+        visible = self.estado in ("menu", "fondo")
+        self.fondo.pausar(not visible)
+        cambio = False
+        if self.fondo.cambiado:                  # imagen terminada de cargar en otro hilo
+            self.fondo.cambiado = False
+            cambio = visible
+        if visible and self.fondo.update():
+            cambio = True
+        return cambio
 
 
 def mostrar_menu(carpeta=None, aviso=""):

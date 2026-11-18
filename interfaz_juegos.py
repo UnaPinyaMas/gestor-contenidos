@@ -1,23 +1,24 @@
-"""Frame '9 Juegos' ("Games"): portadas en burbujas de cristal, por páginas deslizables.
+"""Juegos (entrega v2, 6.8): portadas circulares por páginas deslizables.
 
-Cada juego es su portada recortada en círculo con la capa de cristal del diseño
-(Burbuja/Default) encima. La portada es una imagen junto a la ROM con el mismo
+Cada juego es su portada recortada en círculo con un aro blanco y sombra; la que se
+toca lleva un aro magenta. La portada es una imagen junto a la ROM con el mismo
 nombre (.png, .jpg, .jpeg o .webp); si no hay, se muestra el nombre del juego.
 """
 from pathlib import Path
 import pygame
-from interfaz_inicio import Escala, Control, cargar_svg, cargar_png, sombra, aviso
-from interfaz_redes import cabecera, LINEA_Y
+import estilo
+from estilo import BLANCO, MAGENTA, AZUL_OSCURO
+from interfaz_inicio import Escala, aviso, fuente_aviso, cabecera_blanca, flechas_pagina
 
-VOLVER = pygame.Rect(19, 13, 128, 72)
-FLECHA_IZQ, FLECHA_DER = (60, 382), (1210, 382)
-# Esquinas (x, y) de las burbujas de 128 px: filas de 4, 5 y 4 separadas 212 px.
-HUECOS = ([(x, 162) for x in (258, 470, 682, 894)] +
-          [(x, 318) for x in (152, 364, 576, 788, 1000)] +
-          [(x, 474) for x in (258, 470, 682, 894)])
-LADO = 128
+FLECHA_IZQ, FLECHA_DER = (60, 420), (1220, 420)
+# Centros de las portadas (px del diseño): filas de 4, 5 y 4.
+HUECOS = ([(x, 250) for x in (330, 530, 750, 950)] +
+          [(x, 420) for x in (230, 430, 650, 850, 1050)] +
+          [(x, 590) for x in (330, 530, 750, 950)])
+LADO = 121
+ARRIBA = 135                           # las páginas se deslizan por debajo de aquí
 PORTADA_EXT = (".png", ".jpg", ".jpeg", ".webp")
-GLIFO = (43, 52, 66)
+GLIFO = AZUL_OSCURO
 
 
 def portada(juego):
@@ -30,79 +31,58 @@ def paginas(n):
     return max(1, -(-n // len(HUECOS)))
 
 
-class BurbujaJuego:
-    """Portada en círculo + cristal + sombra, en una sola imagen."""
-    def __init__(self, juego, e, cristal, fuente):
-        k, lado = e.k, e.n(LADO)
-        # La capa de cristal es un SVG de 164x164 con el círculo (128 px) en (82, 74);
-        # su filtro de sombra (dy 8, desenfoque 9) está en esas mismas unidades.
-        s, d = sombra(lado, lado, lado // 2, round(8 * k), max(2, 9 * k), (13, 31, 64, 77))
-        # Rectángulos respecto al centro del círculo; la imagen los contiene a todos.
-        r_sombra = pygame.Rect(d, s.get_size())
-        r_cristal = pygame.Rect((-round(82 * k), -round(74 * k)), cristal.get_size())
-        caja = r_sombra.union(r_cristal)
-        # Con transparencia: las burbujas vecinas se solapan un poco en diagonal. Solo
-        # se usa al montar la página (una vez); la página sí es opaca.
-        img = pygame.Surface(caja.size, pygame.SRCALPHA)
-        cx, cy = -caja.x, -caja.y                        # centro del círculo dentro de img
-        self.desp = (cx - lado // 2, cy - lado // 2)     # esquina del círculo dentro de img
-        img.blit(s, (cx + d[0], cy + d[1]))
-        circulo = pygame.Surface((lado, lado), pygame.SRCALPHA)
-        ruta = portada(juego)
-        try:
-            foto = pygame.image.load(str(ruta)).convert() if ruta else None
-        except pygame.error:
-            foto = None
-        if foto:
-            # Recorte tipo 'cover': llena el círculo sin deformar la portada. En vertical
-            # se muestra la parte de arriba (donde suele ir el título), como en el diseño.
-            f = max(lado / foto.get_width(), lado / foto.get_height())
-            foto = pygame.transform.smoothscale(foto, (round(foto.get_width() * f), round(foto.get_height() * f)))
-            circulo.blit(foto, ((lado - foto.get_width()) // 2, round((lado - foto.get_height()) * .2)))
+def nombre_en_circulo(sup, nombre, fuente):
+    """Nombre en varias líneas centrado en 'sup' (cuando no hay portada)."""
+    nombre = nombre.split("[")[0].strip() or nombre      # sin etiquetas tipo [GBC]
+    lineas, actual = [], ""
+    for palabra in nombre.split():
+        prueba = (actual + " " + palabra).strip()
+        if fuente.size(prueba)[0] <= sup.get_width() * .74:
+            actual = prueba
         else:
-            circulo.fill((240, 244, 248))
-            self._nombre(circulo, Path(juego).stem, fuente)
-        mascara = pygame.Surface((lado, lado), pygame.SRCALPHA)
-        pygame.draw.circle(mascara, (255, 255, 255, 255), (lado // 2, lado // 2), lado // 2)
-        circulo.blit(mascara, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-        img.blit(circulo, self.desp)
-        img.blit(cristal, (cx + r_cristal.x, cy + r_cristal.y))
-        self.img = img
+            lineas.append(actual or palabra)
+            actual = "" if not actual else palabra
+    lineas.append(actual)
+    lineas = [l for l in lineas if l][:4]
+    alto = fuente.get_linesize()
+    y = sup.get_height() // 2 - alto * len(lineas) // 2
+    for linea in lineas:
+        t = fuente.render(linea, True, GLIFO)
+        sup.blit(t, t.get_rect(midtop=(sup.get_width() // 2, y)))
+        y += alto
 
-    @staticmethod
-    def _nombre(sup, nombre, fuente):
-        """Nombre del juego en varias líneas dentro de la burbuja (sin portada)."""
-        nombre = nombre.split("[")[0].strip() or nombre      # sin etiquetas tipo [GBC]
-        lineas, actual = [], ""
-        for palabra in nombre.split():
-            prueba = (actual + " " + palabra).strip()
-            if fuente.size(prueba)[0] <= sup.get_width() * .78:
-                actual = prueba
-            else:
-                lineas.append(actual or palabra)
-                actual = "" if not actual else palabra
-        lineas.append(actual)
-        lineas = [l for l in lineas if l][:4]
-        alto = fuente.get_linesize()
-        y = sup.get_height() // 2 - alto * len(lineas) // 2
-        for linea in lineas:
-            t = fuente.render(linea, True, GLIFO)
-            sup.blit(t, t.get_rect(midtop=(sup.get_width() // 2, y)))
-            y += alto
+
+def portada_circular(ruta, lado, nombre, fuente):
+    """Círculo de 'lado' px con aro blanco, borde fino y sombra: (imagen, centro)."""
+    aro = max(2, round(lado * .03))
+    disco = pygame.Surface((lado, lado), pygame.SRCALPHA)
+    pygame.draw.circle(disco, BLANCO, (lado // 2, lado // 2), lado // 2)
+    pygame.draw.circle(disco, (205, 214, 226), (lado // 2, lado // 2), lado // 2, max(1, aro // 2))
+    interior = lado - 2 * aro
+    foto = None
+    try:
+        foto = pygame.image.load(str(ruta)).convert() if ruta else None
+    except (pygame.error, OSError):
+        foto = None
+    if foto is not None:
+        disco.blit(estilo.circular(foto, interior), (aro, aro))
+    else:
+        fondo = pygame.Surface((interior, interior), pygame.SRCALPHA)
+        pygame.draw.circle(fondo, (238, 242, 247), (interior // 2, interior // 2), interior // 2)
+        nombre_en_circulo(fondo, nombre, fuente)
+        disco.blit(fondo, (aro, aro))
+    img, pos = estilo.con_sombra(disco, lado // 2, lado * .05, lado * .08, (13, 31, 64, 70))
+    return img, (pos[0] + lado // 2, pos[1] + lado // 2)
 
 
 class PantallaJuegos:
     def __init__(self, tam):
         self.esc = e = Escala(tam)
         self.tam = tam
-        self.volver = Control("volver.svg", e.k, ancho=128, alto=72, radio=36,
-                              brillo=(6, 4, 116, 33.12), pos_glifo=(44, 16))
-        self.izq = Control("flecha-izquierda.svg", e.k)
-        self.der = Control("flecha-derecha.svg", e.k)
-        self.cristal = cargar_svg("burbuja-default.svg", e.k)
-        self.titulo = cargar_png("titulo-games.png", e.k)    # "Games" en Zrnic, de Figma
-        self.fuente_nombre = pygame.font.Font(None, e.n(26))
-        self.fuente_aviso = pygame.font.Font(None, e.n(34))
+        self.fondo, self.barra = cabecera_blanca(tam, e, "titulo-games.png")
+        self.flechas = flechas_pagina(e, FLECHA_IZQ, FLECHA_DER)
+        self.fuente_nombre = estilo.fuente(e.n(15), "SemiBold")
+        self.fuente_aviso = fuente_aviso(e)
         self._paginas = (None, [])
 
     def paginas(self, juegos):
@@ -110,44 +90,48 @@ class PantallaJuegos:
         clave = [str(j) for j in juegos]
         if self._paginas[0] != clave:
             e = self.esc
-            arriba = e.p((0, LINEA_Y + 3))[1]
+            arriba = e.p((0, ARRIBA))[1]
             hojas = []
             for p in range(paginas(len(juegos))):
                 hoja = pygame.Surface((self.tam[0], self.tam[1] - arriba)).convert()
-                hoja.fill((255, 255, 255))
-                for juego, (x, y) in zip(juegos[p * len(HUECOS):(p + 1) * len(HUECOS)], HUECOS):
-                    b = BurbujaJuego(juego, e, self.cristal, self.fuente_nombre)
-                    px, py = e.p((x, y))
-                    hoja.blit(b.img, (px - b.desp[0], py - b.desp[1] - arriba))
+                hoja.fill(BLANCO)
+                for juego, centro in zip(juegos[p * len(HUECOS):(p + 1) * len(HUECOS)], HUECOS):
+                    img, c = portada_circular(portada(juego), e.n(LADO), Path(juego).stem, self.fuente_nombre)
+                    px, py = e.p(centro)
+                    hoja.blit(img, (px - c[0], py - c[1] - arriba))
                 hojas.append(hoja)
             self._paginas = (clave, hojas)
         return self._paginas[1]
 
-    def dibujar(self, sup, juegos, posicion, zona, aviso_texto="", tocable=True):
-        """'posicion' es la página (decimal mientras se desliza)."""
+    def dibujar(self, sup, juegos, posicion, zona, aviso_texto="", tocable=True, hora="", resaltado=None):
+        """'posicion' es la página (decimal mientras se desliza); 'resaltado', lo que se toca."""
         e = self.esc
-        sup.fill((255, 255, 255))
-        arriba = e.p((0, LINEA_Y + 3))[1]
+        sup.blit(self.fondo, (0, 0))
+        arriba = e.p((0, ARRIBA))[1]
         w = sup.get_width()
         if not juegos:
-            t = self.fuente_aviso.render("No hay juegos en recursos/juegos", True, GLIFO)
-            sup.blit(t, t.get_rect(center=e.p((640, 360))))
+            t = estilo.fuente(e.n(22), "Medium").render("No hay juegos en recursos/juegos", True, estilo.GRIS)
+            sup.blit(t, t.get_rect(center=e.p((640, 400))))
         for p, hoja in enumerate(self.paginas(juegos)):
             x = round((p - posicion) * w)
             if -w < x < w:
                 sup.blit(hoja, (x, arriba))
-        cabecera(sup, e, self.titulo, self.volver, VOLVER, zona)
-        for control, centro, accion in ((self.izq, FLECHA_IZQ, "juegos_izq"),
-                                        (self.der, FLECHA_DER, "juegos_der")):
-            control.dibujar(sup, e.p(centro))
-            rect = pygame.Rect(0, 0, e.n(110), e.n(110))
-            rect.center = e.p(centro)
-            zona(rect, accion)
-        if tocable and abs(posicion - round(posicion)) < 2e-3:
+        estatico = abs(posicion - round(posicion)) < 2e-3
+        if estatico:
             p = round(posicion)
-            for i, (x, y) in enumerate(HUECOS):
+            for i, centro in enumerate(HUECOS):
                 indice = p * len(HUECOS) + i
-                if indice < len(juegos):
-                    zona(pygame.Rect(e.p((x, y)), (e.n(LADO), e.n(LADO))), ("juego", indice))
+                if indice >= len(juegos):
+                    break
+                if resaltado == ("juego", indice):        # aro magenta en la que se toca
+                    pygame.draw.circle(sup, MAGENTA, e.p(centro), e.n(LADO / 2 + 6), max(2, e.n(4)))
+                if tocable:
+                    r = pygame.Rect(0, 0, e.n(LADO), e.n(LADO))
+                    r.center = e.p(centro)
+                    zona(r, ("juego", indice))
+        for (control, centro), accion in zip(self.flechas, ("juegos_izq", "juegos_der")):
+            r = control.dibujar(sup, centro, resaltado == accion)
+            zona(r.inflate(e.n(40), e.n(40)), accion)
+        self.barra.dibujar(sup, zona, hora)
         if aviso_texto:
-            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(70))
+            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(50))

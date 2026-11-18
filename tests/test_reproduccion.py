@@ -2,6 +2,7 @@
 import os
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 import tempfile
+os.environ.setdefault('TERRAHUB_CONFIG', tempfile.mkdtemp())    # sin el fondo de verdad
 import time
 from pathlib import Path
 import unittest
@@ -60,7 +61,8 @@ class ReproduccionTest(unittest.TestCase):
 
     def test_arrastrar_barras_con_el_dedo(self):
         self.open_silent(self.wav)
-        self.m.estado = 'video'          # barras del reproductor de vídeo (estilo YouTube)
+        self.m.estado = 'video'          # barras del reproductor de vídeo a pantalla completa
+        self.m.accion('ajustes_video')   # panel de ajustes con el volumen
         self.m.dibujar()
         w, h = self.m.vista.pantalla.get_size()
 
@@ -68,22 +70,25 @@ class ReproduccionTest(unittest.TestCase):
             self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, dx=0, dy=0,
                                              touch_id=0, finger_id=0, pressure=1))
 
+        barras = {a[0]: a[1] for _, a in self.m.vista.botones if isinstance(a, tuple)}
+        progreso, volumen = barras['buscar'], barras['volumen']
         with patch.object(self.m.player, 'command', wraps=self.m.player.command) as cmd:
             # Progreso: el punto sigue al dedo y el salto se hace al soltar.
-            dedo(pygame.FINGERDOWN, 100, h - 70)
-            dedo(pygame.FINGERMOTION, 400, h - 72)
+            dedo(pygame.FINGERDOWN, progreso.x + 20, progreso.centery)
+            dedo(pygame.FINGERMOTION, progreso.centerx, progreso.centery - 2)
             self.assertIsNotNone(self.m.arrastre)
             self.assertTrue(self.m.controles_visibles())
             self.assertFalse(any(c.args[0] == 'seek' for c in cmd.call_args_list))
-            dedo(pygame.FINGERUP, 600, h - 60)
+            x = progreso.x + progreso.width * 3 // 4
+            dedo(pygame.FINGERUP, x, progreso.centery + 6)
             self.assertIsNone(self.m.arrastre)
-            cmd.assert_any_call('seek', f'{(600 - 20) / (w - 40) * 100:.2f}', 'absolute-percent')
+            cmd.assert_any_call('seek', f'{(x - progreso.x) / progreso.width * 100:.2f}', 'absolute-percent')
             # Volumen: cambia mientras se arrastra, sin esperar a soltar.
-            dedo(pygame.FINGERDOWN, 256, h - 26)
+            dedo(pygame.FINGERDOWN, volumen.x, volumen.centery)
             self.assertEqual(self.m.volumen, 0)
-            dedo(pygame.FINGERMOTION, 326, h - 30)
+            dedo(pygame.FINGERMOTION, volumen.centerx, volumen.centery)
             self.assertEqual(self.m.volumen, 50)
-            dedo(pygame.FINGERUP, 500, h - 20)
+            dedo(pygame.FINGERUP, volumen.right + 30, volumen.centery)
             self.assertEqual(self.m.volumen, 100)
             self.assertIsNone(self.m.arrastre)
 
@@ -103,8 +108,9 @@ class ReproduccionTest(unittest.TestCase):
             self.m.evento(pygame.event.Event(tipo, x=x / w, y=y / h, finger_id=0))
 
         acciones = {a if not isinstance(a, tuple) else a[0]: r for r, a in self.m.vista.botones}
-        for esperada in ('volver', 'pausa', 'audio_anterior', 'audio_siguiente', 'buscar', 'letra'):
+        for esperada in ('pausa', 'audio_anterior', 'audio_siguiente', 'buscar', 'letra'):
             self.assertIn(esperada, acciones)
+        self.assertIsNotNone(self.m.vista.atras)          # Tornar arriba a la izquierda
         barra = next(a[1] for _, a in self.m.vista.botones if isinstance(a, tuple) and a[0] == 'buscar')
         with patch.object(self.m.player, 'command', wraps=self.m.player.command) as cmd:
             # La barra de progreso sigue al dedo y salta al soltar.
@@ -124,7 +130,19 @@ class ReproduccionTest(unittest.TestCase):
             self.m.posicion = 1.0
             self.m.accion('audio_anterior')
             cmd.assert_any_call('seek', '0', 'absolute')
-        self.m.accion('volver')
+        # Tornar se pone violeta al pulsarlo y vuelve al soltar encima; si el dedo
+        # se va antes de soltar, no hace nada.
+        self.m.dibujar()
+        centro = self.m.vista.atras.rect.center
+        antes = self.m.vista.completo.get_at(centro)
+        dedo(pygame.FINGERDOWN, *centro)
+        self.assertTrue(self.m.atras_pulsado)
+        self.m.dibujar()
+        self.assertNotEqual(self.m.vista.completo.get_at(centro), antes)
+        dedo(pygame.FINGERUP, w // 2, h // 2)
+        self.assertEqual(self.m.estado, 'audio')
+        dedo(pygame.FINGERDOWN, *centro)
+        dedo(pygame.FINGERUP, *centro)
         self.assertEqual(self.m.estado, 'carpeta')
 
     def test_lista_music_y_pistas_contiguas(self):

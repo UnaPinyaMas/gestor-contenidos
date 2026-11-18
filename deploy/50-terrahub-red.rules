@@ -1,0 +1,13 @@
+// TerraHub: conectarse a redes Wi-Fi desde la pantalla táctil.
+// El servicio corre como 'joviat' sin sesión de usuario activa, así que
+// NetworkManager pediría autorización (polkit). Solo se permite a ese usuario
+// controlar la red y guardar conexiones Wi-Fi; nada más.
+polkit.addRule(function (action, subject) {
+    if (subject.user == "joviat" &&
+        (action.id == "org.freedesktop.NetworkManager.network-control" ||
+         action.id == "org.freedesktop.NetworkManager.wifi.scan" ||
+         action.id == "org.freedesktop.NetworkManager.settings.modify.own" ||
+         action.id == "org.freedesktop.NetworkManager.settings.modify.system")) {
+        return polkit.Result.YES;
+    }
+});

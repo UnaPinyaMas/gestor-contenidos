@@ -74,6 +74,16 @@ class LectorDocumento:
         self.x += dx
         self.y += dy
 
+    @property
+    def ampliado(self):
+        """PDF/cómic con zoom: arrastrar mueve la página en vez de pasarla."""
+        return not self.doc.is_reflowable and self.zoom > 1.0
+
+    def arrastrar(self, dx_px, dy_px):
+        """Mueve la página ampliada según lo que el dedo se ha desplazado (px de pantalla)."""
+        escala = getattr(self, "escala", 1.0) or 1.0
+        self.desplazar(-dx_px / escala, -dy_px / escala)
+
     def render(self):
         ubicacion = (self.capitulo, self.pagina) if self.doc.is_reflowable else self.pagina
         page = self.doc.load_page(ubicacion)
@@ -82,6 +92,7 @@ class LectorDocumento:
         scale = min(w / rect.width, h / rect.height)
         if not self.doc.is_reflowable:
             scale *= self.zoom
+        self.escala = scale
         visible_w, visible_h = w / scale, h / scale
         self.x = max(0, min(self.x, max(0, rect.width - visible_w)))
         self.y = max(0, min(self.y, max(0, rect.height - visible_h)))
@@ -92,7 +103,7 @@ class LectorDocumento:
                               colorspace=self.fitz.csRGB, clip=clip, alpha=False)
         imagen = pygame.image.frombuffer(pix.samples, (pix.width, pix.height), 'RGB').copy()
         fondo = pygame.Surface(self.size)
-        fondo.fill((220, 224, 228))
+        fondo.fill((255, 255, 255))               # la página va sobre el blanco del lector
         fondo.blit(imagen, imagen.get_rect(center=(w // 2, h // 2)))
         return fondo
 

@@ -1,29 +1,28 @@
-"""Frame '4 Redes disponibles': lista de redes Wi-Fi con su intensidad de señal.
+"""Redes disponibles (entrega v2, 6.6): lista Wi-Fi con las mismas filas que Configuración.
 
 Las redes se leen con nmcli (NetworkManager), que no necesita root para listar.
+Conectarse sí necesita permiso: el servicio no tiene sesión de usuario, así que
+deploy/50-terrahub-red.rules (polkit) se lo da al usuario de TerraHub.
 """
+import os
 import re
 import subprocess
 import pygame
-from interfaz_inicio import Escala, Control, cargar_svg, sombra, aviso, TEXTO, DISENO
+import estilo
+from estilo import BLANCO
+from interfaz_inicio import (Escala, BarraSuperior, aviso, fuente_aviso, fondo_magenta, fila_pulsada,
+                             DISENO)
 
-DISENO_ALTO = DISENO[1]
-
-GLIFO = (43, 52, 66)                   # #2B3442, color de los glifos del diseño
-VOLVER = pygame.Rect(15, 14, 128, 72)
-TITULO_Y = 52
-LINEA_Y = 100
-# Filas del frame en y = 154, 271, 392 y 509: paso medio de 118 px. El icono de
-# señal va 4 px por encima de su fila. La lista se desplaza en píxeles del diseño.
-FILA_Y0, PASO = 154, 118
-FILA = pygame.Rect(330, 0, 620, 88)
-SENAL = pygame.Rect(125, 0, 96, 96)
-LISTA_ARRIBA = LINEA_Y + 3             # la lista se recorta bajo la línea de cabecera
+# Banda de cabecera (Tornar + título) bajo la barra superior, y filas: px del diseño.
+BANDA = pygame.Rect(0, 48, 1280, 64)
+LISTA_ARRIBA = BANDA.bottom + 1
+PASO = 76                              # alto de cada fila
+LINEA_Y = BANDA.bottom                 # compatibilidad: donde acaba la cabecera
 
 
 def desplazamiento_maximo(n):
     """Cuánto se puede desplazar una lista de n redes (px del diseño)."""
-    return max(0, FILA_Y0 + (n - 1) * PASO + 96 + 30 - 720)
+    return max(0, n * PASO + 20 - (DISENO[1] - LISTA_ARRIBA))
 
 
 def buscar_redes():
@@ -43,180 +42,183 @@ def buscar_redes():
         if len(campos) < 4 or not campos[1]:
             continue                       # redes ocultas (sin nombre)
         uso, ssid, senal, seguridad = campos[:4]
-        r = redes.setdefault(ssid, {"ssid": ssid, "senal": 0, "conectada": False, "segura": False})
+        r = redes.setdefault(ssid, {"ssid": ssid, "senal": 0, "conectada": False, "segura": False,
+                                    "empresa": False})
         r["senal"] = max(r["senal"], int(senal or 0))
         r["conectada"] |= uso.strip() == "*"
         r["segura"] |= bool(seguridad.strip())
+        r["empresa"] |= "802.1X" in seguridad          # pide usuario además de contraseña
     return sorted(redes.values(), key=lambda r: (not r["conectada"], -r["senal"], r["ssid"].casefold()))
 
 
+def _nmcli(*argumentos, timeout=20):
+    """nmcli en inglés (para reconocer los errores) sin pasar por un shell."""
+    return subprocess.run(["nmcli", *argumentos], capture_output=True, text=True, timeout=timeout,
+                          env={**os.environ, "LC_ALL": "C"})
+
+
+def redes_guardadas():
+    """Nombres de las conexiones Wi-Fi guardadas (nmcli las llama como la red)."""
+    try:
+        salida = _nmcli("-t", "-f", "NAME,TYPE", "connection", "show").stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    guardadas = set()
+    for linea in salida.splitlines():
+        campos = [c.replace("\\:", ":") for c in re.split(r"(?<!\\):", linea)]
+        if len(campos) >= 2 and campos[1] == "802-11-wireless":
+            guardadas.add(campos[0])
+    return guardadas
+
+
+def conectar(ssid, clave=None):
+    """Conecta a la red 'ssid' y devuelve (conseguido, mensaje para la pantalla).
+
+    Sin 'clave' usa la conexión guardada (o la red abierta). La clave va como
+    argumento de nmcli, nunca por un shell ni a los registros. Si falla una red
+    nueva, se borra la conexión a medias para no guardar una contraseña mala;
+    NetworkManager vuelve solo a la red de antes.
+    """
+    antes = redes_guardadas()
+    if clave is None and ssid in antes:
+        orden = ["--wait", "30", "connection", "up", "id", ssid]
+    else:
+        orden = ["--wait", "30", "device", "wifi", "connect", ssid]
+        if clave is not None:
+            orden += ["password", clave]
+    try:
+        r = _nmcli(*orden, timeout=45)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print("Wifi:", type(error).__name__, flush=True)
+        return False, f"No se pudo conectar a {ssid}"
+    if r.returncode == 0:
+        return True, f"Conectado a {ssid}"
+    error = (r.stderr or r.stdout).strip()
+    print("Wifi:", error.replace(clave, "***") if clave else error, flush=True)
+    if ssid not in antes and ssid in redes_guardadas():
+        try:
+            _nmcli("connection", "delete", "id", ssid)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    texto = error.lower()
+    if "not authorized" in texto or "insufficient privileges" in texto:
+        return False, "Falta el permiso de red: instala deploy/50-terrahub-red.rules"
+    if "secrets were required" in texto or "psk" in texto or "password" in texto:
+        return False, "Contraseña incorrecta"
+    return False, f"No se pudo conectar a {ssid}"
+
+
 def nivel(senal):
-    """Intensidad 0-100 de nmcli a los niveles 0-4 de los iconos Señal/Nivel."""
+    """Intensidad 0-100 de nmcli a los niveles 0-4 de las barras de señal."""
     return sum(senal >= umbral for umbral in (20, 40, 60, 80))
 
 
+# Compatibilidad con módulos antiguos.
 def relleno(w, h, radio, arriba, abajo):
-    """Rectángulo redondeado con degradado vertical (colores RGBA)."""
-    sup = pygame.Surface((w, h), pygame.SRCALPHA)
-    for y in range(h):
-        t = y / max(1, h - 1)
-        pygame.draw.line(sup, tuple(round(a + (b - a) * t) for a, b in zip(arriba, abajo)), (0, y), (w - 1, y))
-    forma = pygame.Surface((w, h), pygame.SRCALPHA)
-    pygame.draw.rect(forma, (255, 255, 255, 255), forma.get_rect(), border_radius=radio)
-    sup.blit(forma, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-    return sup
+    return estilo.degradado(w, h, arriba, abajo, radio)
 
 
-def con_sombra(forma, radio, dy, desenfoque, alpha, k):
-    """Forma redondeada con su sombra ya pintada debajo, en una sola superficie.
-
-    Devuelve (superficie, desplazamiento de la forma dentro de ella). Se calcula una
-    vez: difuminar sombras en cada fotograma hacía ir a tirones el desplazamiento.
-    """
-    s, d = sombra(forma.get_width(), forma.get_height(), radio, round(dy * k), desenfoque * k,
-                  (13, 31, 64, alpha))
-    w, h = s.get_size()
-    sup = pygame.Surface((w, h + abs(d[1] + h // 2) * 2), pygame.SRCALPHA)
-    centro = (w // 2, sup.get_height() // 2)
-    sup.blit(s, (centro[0] + d[0], centro[1] + d[1]))
-    pos = (centro[0] - forma.get_width() // 2, centro[1] - forma.get_height() // 2)
-    sup.blit(forma, pos)
-    return sup.convert_alpha(), pos      # formato de la pantalla: copias más rápidas
-
-
-class IconoSenal:
-    """Componentes Señal/Nivel 0-4: caja de cristal con cuatro barras (ya montados)."""
-    def __init__(self, k):
-        n = lambda v: max(1, round(v * k))
-        self.iconos = []
-        for nivel_senal in range(5):
-            base = relleno(n(96), n(96), n(24), (255, 255, 255, 255), (220, 230, 240, 255))
-            pygame.draw.rect(base, (175, 192, 210), base.get_rect(), max(1, round(1.5 * k)), border_radius=n(24))
-            for i, (x, top, alto) in enumerate(((18, 62, 14), (35, 50, 26), (52, 38, 38), (69, 26, 50))):
-                if i < nivel_senal:
-                    base.blit(relleno(n(12), n(alto), n(4), (111, 184, 255, 255), (23, 100, 214, 255)),
-                              (n(x), n(top)))
-                else:
-                    pygame.draw.rect(base, (195, 208, 222), (n(x), n(top), n(12), n(alto)), border_radius=n(4))
-            self.iconos.append(con_sombra(base, n(24), 3, 8, 46, k))
-
-    def dibujar(self, sup, pos, nivel_senal):
-        img, desp = self.iconos[nivel_senal]
-        sup.blit(img, (pos[0] - desp[0], pos[1] - desp[1]))
-
-
-class FilaRed:
-    """Fila/Red conectada (píldora azul) y su variante sin conectar (cristal claro)."""
-    def __init__(self, k):
-        self.k = k
-        n = lambda v: max(1, round(v * k))
-        self.n = n
-        w, h, r = n(620), n(88), n(44)
-        self.conectada = relleno(w, h, r, (111, 184, 255, 255), (23, 100, 214, 255))
-        pygame.draw.rect(self.conectada, (255, 255, 255, 153), self.conectada.get_rect(), n(2), border_radius=r)
-        self.libre = relleno(w, h, r, (255, 255, 255, 255), (211, 222, 234, 255))
-        pygame.draw.rect(self.libre, (175, 192, 210), self.libre.get_rect(), max(1, round(1.5 * k)), border_radius=r)
-        brillo = relleno(n(600), n(40), n(40), (255, 255, 255, 140), (255, 255, 255, 0))
-        for fondo in (self.conectada, self.libre):
-            fondo.blit(brillo, (n(10), n(4)))
-        wifi = {True: cargar_svg("wifi.svg", k), False: cargar_svg("wifi.svg", k, color="#2B3442")}
-        for conectada, fondo in ((True, self.conectada), (False, self.libre)):
-            fondo.blit(wifi[conectada], (n(32), n(24)))
-        # Fondo + sombra montados una vez para cada variante.
-        self.fondos = {True: con_sombra(self.conectada, r, 6, 14, 77, k),
-                       False: con_sombra(self.libre, r, 6, 14, 56, k)}
-        self.fuente_nombre = pygame.font.Font(None, n(34))
-        self.fuente_estado = pygame.font.Font(None, n(26))
-        self.textos = {}                 # (ssid, conectada, segura) -> textos ya renderizados
-
-    def _textos(self, red):
-        clave = (red["ssid"], red["conectada"], red["segura"])
-        if clave not in self.textos:
-            n = self.n
-            color = (255, 255, 255) if red["conectada"] else GLIFO
-            estado = "Conectado" if red["conectada"] else ("Protegida" if red["segura"] else "Abierta")
-            nombre = red["ssid"]
-            while self.fuente_nombre.size(nombre)[0] > n(498 - 92 - 16) and len(nombre) > 4:
-                nombre = nombre[:-4] + "..."
-            self.textos[clave] = (self.fuente_nombre.render(nombre, True, color),
-                                  self.fuente_estado.render(estado, True, color))
-        return self.textos[clave]
-
-    def dibujar(self, sup, pos, red):
-        n = self.n
-        img, desp = self.fondos[red["conectada"]]
-        sup.blit(img, (pos[0] - desp[0], pos[1] - desp[1]))
-        nombre, estado = self._textos(red)
-        sup.blit(nombre, nombre.get_rect(midleft=(pos[0] + n(92), pos[1] + n(44))))
-        sup.blit(estado, estado.get_rect(midleft=(pos[0] + n(498), pos[1] + n(44))))
-
-
-def cabecera(sup, e, titulo, volver, rect_volver, zona):
-    """Cabecera de las pantallas de lista: Volver, título centrado y línea de 3 px.
-
-    'titulo' es el texto ya renderizado. Se pinta encima de la lista, así que tapa
-    lo que se desplace por debajo.
-    """
-    sup.fill((255, 255, 255), (0, 0, sup.get_width(), e.p((0, LINEA_Y))[1]))
-    sup.blit(titulo, titulo.get_rect(center=e.p((640, TITULO_Y))))
-    pygame.draw.rect(sup, TEXTO, (0, e.p((0, LINEA_Y))[1], sup.get_width(), e.n(3)))
-    volver.dibujar(sup, e.p(rect_volver.center))
-    zona(e.r(rect_volver).inflate(e.n(24), e.n(24)), "volver")
+def banda(sup, e, titulo, derecha=None):
+    """Cabecera de las listas magenta: banda más oscura con el título (y un texto a la
+    derecha). El Tornar lo pinta el menú encima, a la izquierda."""
+    r = e.r(BANDA)
+    oscura = pygame.Surface(r.size, pygame.SRCALPHA)
+    oscura.fill((50, 0, 60, 70))
+    sup.blit(oscura, r)
+    linea = pygame.Surface((r.width, max(1, e.n(1.5))), pygame.SRCALPHA)
+    linea.fill((220, 200, 255, 120))
+    sup.blit(linea, (r.x, r.bottom - linea.get_height()))
+    sup.blit(titulo, titulo.get_rect(midleft=(e.p((134, 0))[0], r.centery)))
+    if derecha is not None:
+        sup.blit(derecha, derecha.get_rect(midright=(e.p((1251, 0))[0], r.centery)))
 
 
 class PantallaRedes:
     def __init__(self, tam):
         self.esc = e = Escala(tam)
-        self.volver = Control("volver.svg", e.k, ancho=128, alto=72, radio=36,
-                              brillo=(6, 4, 116, 33.12), pos_glifo=(44, 16))
-        self.senal = IconoSenal(e.k)
-        self.fila = FilaRed(e.k)
-        self.titulo = pygame.font.Font(None, e.n(52)).render("Redes disponibles", True, TEXTO)
-        self.fuente_aviso = pygame.font.Font(None, e.n(34))
-        self._lista = (None, None)       # (redes con las que se montó, superficie)
+        self.tam = tam
+        self.barra = BarraSuperior(e, tam[0])
+        self.fila = e.n(PASO)
+        fondo = fondo_magenta(tam, e)
+        fondo.blit(self.barra.fondo, (0, 0))
+        titulo = estilo.fuente(e.n(25), "SemiBold").render("Redes disponibles", True, BLANCO)
+        pista = estilo.fuente(e.n(17), "Medium").render("Toca una red para conectar", True, (245, 225, 245))
+        banda(fondo, e, titulo, pista)
+        self.fondo = fondo
+        self.fuente_nombre = estilo.fuente(e.n(25), "SemiBold")
+        self.fuente_estado = estilo.fuente(e.n(19), "Medium")
+        self.fuente_aviso = fuente_aviso(e)
+        self.candado = estilo.icono("icono-candado.svg", e.n(24), BLANCO)
+        self.separador = pygame.Surface((tam[0], 1), pygame.SRCALPHA)
+        self.separador.fill((255, 255, 255, 46))
+        self.pulsada, self.halo = fila_pulsada(tam[0], self.fila)
+        self.senales = [self._senal(n) for n in range(5)]
+        self._textos = {}
 
-    def lista(self, redes, ancho):
-        """Toda la lista pintada una vez en una superficie opaca (fondo blanco).
+    def _senal(self, nivel_senal):
+        """Cuatro barras blancas de alturas crecientes; las que sobran, translúcidas."""
+        e = self.esc
+        w, h = e.n(31), e.n(25)
+        s = pygame.Surface((w, h), pygame.SRCALPHA)
+        ancho, paso = max(2, e.n(5.5)), e.n(8.4)
+        for i, alto in enumerate((6, 12, 18, 25)):
+            a = e.n(alto)
+            color = (255, 255, 255, 255) if i < nivel_senal else (255, 255, 255, 95)
+            pygame.draw.rect(s, color, (round(i * paso), h - a, ancho, a), border_radius=max(1, ancho // 3))
+        return s
 
-        Al desplazarse solo se copia la franja visible: copiar algo opaco es mucho
-        más rápido que mezclar decenas de transparencias en cada fotograma.
-        """
-        clave = [(r["ssid"], r["senal"], r["conectada"], r["segura"]) for r in redes]
-        if self._lista[0] != clave:
+    def _contenido(self, red):
+        """Señal, nombre y estado de una red, ya pintados en blanco (transparente)."""
+        clave = (red["ssid"], nivel(red["senal"]), red["conectada"], red["segura"])
+        if clave not in self._textos:
+            if len(self._textos) > 60:
+                self._textos.clear()
             e = self.esc
-            alto = FILA_Y0 + (len(redes) - 1) * PASO + 96 + 30 - LISTA_ARRIBA
-            sup = pygame.Surface((ancho, max(1, e.n(alto)))).convert()
-            sup.fill((255, 255, 255))
-            for i, red in enumerate(redes):
-                y = FILA_Y0 + i * PASO - LISTA_ARRIBA
-                self.senal.dibujar(sup, (e.p((SENAL.x, 0))[0], e.n(y - 4)), nivel(red["senal"]))
-                self.fila.dibujar(sup, (e.p((FILA.x, 0))[0], e.n(y)), red)
-            self._lista = (clave, sup)
-        return self._lista[1]
+            w = self.tam[0]
+            s = pygame.Surface((w, self.fila), pygame.SRCALPHA)
+            senal = self.senales[clave[1]]
+            s.blit(senal, senal.get_rect(midleft=(e.p((30, 0))[0], self.fila // 2 - e.n(2))))
+            estado = "Conectado" if red["conectada"] else ("Protegida" if red["segura"] else "Abierta")
+            t_estado = self.fuente_estado.render(estado, True, BLANCO)
+            r_estado = t_estado.get_rect(midright=(e.p((1251, 0))[0], self.fila // 2))
+            s.blit(t_estado, r_estado)
+            if estado == "Protegida":
+                s.blit(self.candado, self.candado.get_rect(midright=(r_estado.x - e.n(10), self.fila // 2)))
+            nombre = estilo.recortar(self.fuente_nombre, red["ssid"], r_estado.x - e.n(60) - e.p((84, 0))[0])
+            sombra_t = self.fuente_nombre.render(nombre, True, (90, 20, 90))
+            t = self.fuente_nombre.render(nombre, True, BLANCO)
+            x = e.p((84, 0))[0]
+            s.blit(sombra_t, sombra_t.get_rect(midleft=(x + 1, self.fila // 2 + 2)))
+            s.blit(t, t.get_rect(midleft=(x, self.fila // 2)))
+            self._textos[clave] = s.convert_alpha()
+        return self._textos[clave]
 
-    def dibujar(self, sup, redes, desplazamiento, zona, aviso_texto="", tocable=True):
+    def dibujar(self, sup, redes, desplazamiento, zona, aviso_texto="", tocable=True, hora="", resaltado=None):
         """'redes' es None mientras se buscan; 'desplazamiento' en px del diseño.
 
         Con 'tocable' falso (mientras se arrastra la lista) no se registran las filas.
         """
         e = self.esc
-        sup.fill((255, 255, 255))
+        sup.blit(self.fondo, (0, 0))
         arriba = e.p((0, LISTA_ARRIBA))[1]
-        if redes is None or not redes:
+        if not redes:
             texto = "Buscando redes..." if redes is None else "No se ha encontrado ninguna red"
-            t = self.fuente_aviso.render(texto, True, GLIFO)
-            sup.blit(t, t.get_rect(center=e.p((640, 360))))
+            t = estilo.fuente(e.n(22), "Medium").render(texto, True, BLANCO)
+            sup.blit(t, t.get_rect(center=e.p((640, 380))))
         else:
-            # Franja visible de la lista (con margen blanco si se estira en los bordes).
-            lista = self.lista(redes, sup.get_width())
-            desp = round(desplazamiento * e.k)
-            origen, destino = max(0, desp), arriba + max(0, -desp)
-            sup.blit(lista, (0, destino), pygame.Rect(0, origen, lista.get_width(), sup.get_height() - destino))
+            sup.set_clip(pygame.Rect(0, arriba, sup.get_width(), sup.get_height() - arriba))
             for i, red in enumerate(redes):
-                fila = pygame.Rect(e.p((FILA.x, FILA_Y0 + i * PASO - desplazamiento)),
-                                   (e.n(FILA.width), e.n(FILA.height)))
-                if tocable and fila.top >= arriba and fila.top < sup.get_height():
-                    zona(fila, ("red", red["ssid"]))
-        cabecera(sup, e, self.titulo, self.volver, VOLVER, zona)
+                y = arriba + round((i * PASO - desplazamiento) * e.k)
+                if y >= sup.get_height() or y + self.fila <= arriba:
+                    continue
+                if red["conectada"] or resaltado == ("red", red["ssid"]):
+                    sup.blit(self.pulsada, (0, y - self.halo))
+                sup.blit(self._contenido(red), (0, y))
+                if not red["conectada"]:
+                    sup.blit(self.separador, (0, y + self.fila - 1))
+                if tocable and y >= arriba - 1:
+                    zona(pygame.Rect(0, y, sup.get_width(), self.fila).clip(sup.get_rect()), ("red", red["ssid"]))
+            sup.set_clip(None)
+        self.barra.dibujar(sup, zona, hora)
         if aviso_texto:
-            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(70))
+            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(58))

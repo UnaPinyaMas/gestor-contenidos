@@ -1,65 +1,77 @@
-"""Pantallas de Inicio, menú de energía y ajustes según el wireframe de Figma (1280x720).
+"""Barra superior, Inicio y Configuración según la entrega de diseño v2 (1280x720).
 
-Las burbujas y los glifos son los SVG exportados del diseño (recursos/interfaz).
-Pygame los rasteriza con nanosvg, que no aplica los filtros de sombra, así que
-la sombra (feOffset dy=8, feGaussianBlur 9, rgba(13,31,64,.3)) se añade aquí.
+Barra superior: negra con una línea magenta debajo; Wi-Fi a la izquierda (abre las
+redes), hora y un círculo magenta a la derecha que se expande hasta Configuración.
+Inicio: logotipo en caja, carrusel de burbujas magenta con el nombre de cada sección,
+flechas de vidrio y puntos de página. Configuración: lista en tonos de magenta; la
+fila pulsada pasa a violeta.
 """
 import io
 import math
 import re
 from pathlib import Path
 import pygame
+import estilo
+from estilo import (BLANCO, NEGRO, MAGENTA, VIOLETA, VIOLETA_CLARO, AZUL_OSCURO, mezcla,
+                    sombra, difuminar as _difuminar)
 
 INTERFAZ = Path(__file__).resolve().parent / "recursos" / "interfaz"
-DISENO = (1280, 720)                  # tamaño del frame en Figma
-TEXTO = (33, 33, 33)                  # #212121
+DISENO = (1280, 720)                  # tamaño de los frames del diseño
+TEXTO = estilo.TEXTO
 
-# Carrusel de Inicio: (etiqueta, sección de CARPETAS, svg). Orden de la nota del diseño.
+# Carrusel de Inicio: (etiqueta, sección de CARPETAS, svg del glifo).
 SECCIONES = [
-    ("Audio", "Audio", "burbuja-audio.svg"),
+    ("Música", "Audio", "burbuja-audio.svg"),
     ("Vídeos", "Vídeos", "burbuja-videos.svg"),
     ("Libros", "Libros", "burbuja-libros.svg"),
     ("Imágenes", "Imágenes", "burbuja-imagenes.svg"),
     ("Juegos", "Juegos", "burbuja-juegos.svg"),
 ]
-# Menú de ajustes (se abre desde el círculo de la barra superior), lista estilo PS Vita:
-# (acción, etiqueta, icono svg). La primera fila despliega las opciones de energía.
+# Configuración (se abre con el círculo de la barra): (acción, etiqueta, icono svg).
+# La primera fila despliega las opciones de energía.
 AJUSTES_FILAS = [
     ("energia", "Opciones de energía", "energia-apagar.svg"),
     ("ajuste_fecha", "Fecha y hora", "icono-reloj.svg"),
     ("ajuste_redes", "Redes", "wifi.svg"),
     ("ajuste_ip", "Dirección IP", "icono-ip.svg"),
     ("ajuste_fondo", "Fondo de pantalla", "icono-fondo.svg"),
+    ("salir_terminal", "Salir a la terminal", "icono-salir.svg"),
 ]
 ENERGIA_OPCIONES = [
     ("suspender", "Suspender", "energia-suspender.svg"),
     ("reiniciar", "Reiniciar", "energia-reiniciar.svg"),
     ("apagar", "Apagar", "energia-apagar.svg"),
 ]
-FILA_ALTO = 92                         # px del diseño
+CON_FLECHA = {"ajuste_redes", "ajuste_fondo"}     # filas que abren otra pantalla
+FILA_ALTO = 64                         # px del diseño
 
-# Geometría de los frames (coordenadas de Figma, centros de los círculos base).
-CENTRO_CARRUSEL = (640, 345)
-SEPARACION = 340                      # de Vídeos (640) a Audio/Libros (300/980)
-DIAMETRO_CENTRO, DIAMETRO_LADO = 294, 221
-FLECHA_IZQ, FLECHA_DER = (112, 364), (1166, 364)
-LOGO = pygame.Rect(440, 62, 400, 84)  # bajado 26 px para dejar sitio a la barra superior
+# Inicio (coordenadas del diseño).
+CENTRO_CARRUSEL = (640, 400)
+SEPARACION = 390
+DIAMETRO_CENTRO, DIAMETRO_LADO = 270, 200
+FLECHA_IZQ, FLECHA_DER = (70, 400), (1210, 400)
+LADO_FLECHA = 60
+LOGO = pygame.Rect(443, 77, 394, 83)   # logotipo en caja
+PUNTOS_Y = 673
 
-# Barra superior (no está en el Figma: estilo de la referencia del equipo). Medidas en
-# px del diseño; va pegada al borde de arriba de la pantalla.
-BARRA_ALTO = 44
-BARRA_CORTE = 880                     # x de la franja blanca en diagonal
-CIRCULO = ((1232, 20), 100)           # (centro, diámetro) del círculo de la esquina
-RELOJ_DER = 1160                      # borde derecho de la hora
+# Barra superior.
+BARRA_ALTO = 45                        # banda negra; debajo, 3 px de línea magenta
+LINEA = 3
+CIRCULO = ((1228, 22), 70)             # (centro, diámetro)
+RELOJ_DER = 1175
 
 
 class Escala:
-    """Convierte coordenadas del frame 1280x720 a la pantalla, sin deformar."""
+    """Convierte coordenadas del frame 1280x720 a la pantalla, sin deformar.
+
+    Centrado en horizontal y pegado arriba: la barra superior va siempre en el borde y
+    lo de debajo empieza justo después (en 800x480 sobran 30 px abajo, no en medio).
+    """
     def __init__(self, tam):
         w, h = tam
         self.k = min(w / DISENO[0], h / DISENO[1])
         self.dx = (w - DISENO[0] * self.k) / 2
-        self.dy = (h - DISENO[1] * self.k) / 2
+        self.dy = 0.0
 
     def p(self, punto):
         return (round(self.dx + punto[0] * self.k), round(self.dy + punto[1] * self.k))
@@ -73,11 +85,7 @@ class Escala:
 
 
 def cargar_svg(nombre, factor, color=None, original="white"):
-    """Rasteriza un SVG del diseño a 'factor' veces su tamaño (desde el vector).
-
-    'color' sustituye el color 'original' de los glifos (por defecto el blanco; p. ej.
-    un icono blanco sobre fondo claro, o uno oscuro en blanco sobre fondo oscuro).
-    """
+    """SVG del diseño a 'factor' veces su tamaño (cambiando 'original' por 'color')."""
     texto = (INTERFAZ / nombre).read_text(encoding="utf-8")
     if color:
         texto = texto.replace(f'"{original}"', f'"{color}"')
@@ -89,162 +97,206 @@ def cargar_svg(nombre, factor, color=None, original="white"):
 
 
 def cargar_png(nombre, factor):
-    """Imagen exportada del diseño, escalada a 'factor' veces su tamaño.
-
-    Los títulos en Zrnic ("Games", "Music", "Lyrics") se usan así, ya renderizados por
-    Figma: la licencia gratuita de Zrnic no permite incrustar la fuente en software.
-    """
+    """Imagen del diseño escalada a 'factor' veces su tamaño."""
     img = pygame.image.load(str(INTERFAZ / nombre)).convert_alpha()
     tam = (max(1, round(img.get_width() * factor)), max(1, round(img.get_height() * factor)))
     return pygame.transform.smoothscale(img, tam)
 
 
-def _base(nombre):
-    texto = (INTERFAZ / nombre).read_text(encoding="utf-8")
-    m = re.search(r'<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"', texto)
-    return float(m.group(1)), float(m.group(2)), float(m.group(3))
+def aviso(sup, texto, fuente, y):
+    estilo.aviso(sup, texto, fuente, y)
 
 
-def _difuminar(sup, radio):
-    """Desenfoque aproximado (reducir y ampliar) para las sombras."""
-    w, h = sup.get_size()
-    f = max(2, round(radio))
-    peq = pygame.transform.smoothscale(sup, (max(1, w // f), max(1, h // f)))
-    return pygame.transform.smoothscale(peq, (w, h))
+def _mezcla(a, b, t):
+    return mezcla(a, b, t)
 
 
-def sombra(ancho, alto, radio, dy, desenfoque, color):
-    """Sombra de un rectángulo redondeado (o círculo) como las del diseño.
+def _aclarar(c, cantidad):
+    return tuple(min(255, round(x + (255 - x) * cantidad)) for x in c)
 
-    Devuelve la superficie y su desplazamiento respecto al centro de la forma.
+
+def _oscurecer(c, f):
+    return tuple(round(x * f) for x in c)
+
+
+def fuente_aviso(e):
+    return estilo.fuente(e.n(19), "Medium")
+
+
+class BotonTornar:
+    """Control Tornar: píldora de vidrio con la flecha de volver; violeta al pulsarla."""
+    def __init__(self, e, rect):
+        self.rect = e.r(rect)
+        self.boton = estilo.Boton(self.rect.width, self.rect.height, glifo="volver.svg",
+                                  lado_glifo=self.rect.height * .72)
+
+    def dibujar(self, sup, pulsado=False):
+        self.boton.dibujar(sup, self.rect.center, pulsado)
+
+    def toca(self, pos):
+        return self.rect.inflate(self.rect.height * .5, self.rect.height * .6).collidepoint(pos)
+
+
+# Posiciones del Tornar (px del diseño): bajo la barra en las pantallas con cabecera
+# blanca; en la banda de las listas magenta; arriba del todo a pantalla completa.
+TORNAR_CABECERA = pygame.Rect(25, 67, 111, 49)
+TORNAR_BANDA = pygame.Rect(28, 60, 84, 41)
+TORNAR_COMPLETO = pygame.Rect(25, 25, 111, 49)
+
+
+TITULO_CENTRO_Y = 88                   # títulos en Zrnic (Games, Music...): centro y alto
+TITULO_ALTO = 47
+SUBRAYADO_Y = 119
+
+
+def cabecera_blanca(tam, e, titulo=None):
+    """Fondo de las pantallas de contenido (Games, Music, Vídeos...): blanco, barra
+    superior y título en Zrnic con la línea magenta debajo. Devuelve (fondo, barra)."""
+    barra = BarraSuperior(e, tam[0])
+    fondo = pygame.Surface(tam).convert()
+    fondo.fill(BLANCO)
+    fondo.blit(barra.fondo, (0, 0))
+    if titulo:
+        img = estilo.imagen(titulo, alto=e.n(TITULO_ALTO))
+        fondo.blit(img, img.get_rect(center=e.p((640, TITULO_CENTRO_Y))))
+        estilo.subrayado(fondo, e.p((640, 0))[0], e.p((0, SUBRAYADO_Y))[1], e.n(64), e.n(3))
+    return fondo, barra
+
+
+def flechas_pagina(e, izq, der):
+    """Flechas de vidrio para cambiar de página (Games, Music)."""
+    lado = e.n(LADO_FLECHA)
+    return [(estilo.Boton(lado, lado, glifo="flecha-izquierda.svg", lado_glifo=lado * .5), e.p(izq)),
+            (estilo.Boton(lado, lado, glifo="flecha-derecha.svg", lado_glifo=lado * .5), e.p(der))]
+
+
+class BarraSuperior:
+    """Barra negra con la línea magenta: red a la izquierda, hora y círculo a la derecha.
+
+    Lo fijo se pinta una vez en 'fondo'; cada fotograma solo se copian la hora (cacheada
+    por minuto) y el círculo. Tocar la red abre las redes; el círculo, Configuración.
     """
-    margen = round(desenfoque * 2.5)
-    s = pygame.Surface((ancho + margen * 2, alto + margen * 2), pygame.SRCALPHA)
-    pygame.draw.rect(s, color, (margen, margen, ancho, alto), border_radius=radio)
-    # convert_alpha: mismo formato de píxel que la pantalla, copias más rápidas.
-    return _difuminar(s, desenfoque).convert_alpha(), (-s.get_width() // 2, -s.get_height() // 2 + dy)
+    def __init__(self, e, ancho, color=None):
+        self.e = e
+        alto = e.n(BARRA_ALTO)
+        linea = max(2, e.n(LINEA))
+        self.fondo = pygame.Surface((ancho, alto + linea)).convert()
+        self.fondo.fill(NEGRO)
+        self.fondo.fill(MAGENTA, (0, alto, ancho, linea))
+        # Un poco de sombra magenta oscura bajo el negro (como en el diseño).
+        pygame.draw.line(self.fondo, (103, 33, 103), (0, alto - 1), (ancho, alto - 1))
+        self.centro_y = alto // 2
+        wifi = estilo.icono("wifi.svg", e.n(27), BLANCO)
+        self.fondo.blit(wifi, wifi.get_rect(center=(round(e.dx + e.n(33)), self.centro_y)))
+        self.zona_red = pygame.Rect(0, 0, round(e.dx + e.n(120)), alto + linea + e.n(10))
+        self.fuente = estilo.fuente(e.n(23), "Medium")
+        self._hora = ("", None)
+        (cx, cy), diam = CIRCULO
+        self.circulo, self.ancla = estilo.burbuja(e.n(diam), aro=max(1, e.n(2.5)))
+        self.centro = (round(e.dx + cx * e.k), round(cy * e.k))
+        self.radio = e.n(diam) // 2
+        r = self.radio + e.n(30)
+        self.zona_circulo = pygame.Rect(self.centro[0] - r, 0, 2 * r, self.centro[1] + self.radio + e.n(6))
 
+    def dibujar(self, sup, zona, hora, fijo=True):
+        """'fijo': el fondo de la barra ya está en la superficie."""
+        e = self.e
+        if not fijo:
+            sup.blit(self.fondo, (0, 0))
+        if self._hora[0] != hora:
+            self._hora = (hora, self.fuente.render(hora, True, BLANCO))
+        texto = self._hora[1]
+        sup.blit(texto, texto.get_rect(midright=(round(e.dx + RELOJ_DER * e.k), self.centro_y + 1)))
+        sup.blit(self.circulo, (self.centro[0] - self.ancla[0], self.centro[1] - self.ancla[1]))
+        self.zonas(zona)
 
-class Burbuja:
-    """Burbuja del diseño escalada a un diámetro de círculo base dado, con sombra."""
-    def __init__(self, nombre, diametro):
-        cx, cy, r = _base(nombre)
-        f = diametro / (2 * r)
-        self.img = cargar_svg(nombre, f)
-        self.ancla = (round(cx * f), round(cy * f))     # centro del círculo dentro de img
-        self.diametro = diametro
-        k = diametro / 294                              # el filtro está definido a escala Vídeos
-        self.sombra, self.desp = sombra(diametro, diametro, diametro // 2, round(8 * k),
-                                        max(2, 9 * k), (13, 31, 64, 77))
+    def zonas(self, zona):
+        zona(self.zona_red, "redes")
+        zona(self.zona_circulo, "panel")
 
-    def dibujar(self, sup, centro, alpha=255):
-        x, y = centro
-        s, img = self.sombra, self.img
-        if alpha < 255:
-            s, img = s.copy(), img.copy()
-            s.set_alpha(alpha)
-            img.set_alpha(alpha)
-        sup.blit(s, (x + self.desp[0], y + self.desp[1]))
-        sup.blit(img, (x - self.ancla[0], y - self.ancla[1]))
-
-
-class Control:
-    """Controles de cristal del diseño (Control/Izquierda, /Derecha, /Volver).
-
-    Base con degradado blanco -> #d3deea, borde 1.5px #afc0d2, sombra 0 4px 10px
-    rgba(13,31,64,.22), brillo superior y glifo SVG. Medidas en px del diseño.
-    """
-    CLARO = ((255, 255, 255), (211, 222, 234), (175, 192, 210), 230)   # arriba, abajo, borde, brillo
-    OSCURO = ((90, 100, 117), (42, 48, 59), (28, 33, 41), 89)          # Control/Pausa y /Reproducir
-
-    def __init__(self, glifo, k, ancho=80, alto=80, radio=40, brillo=(6, 4, 68, 36.8),
-                 pos_glifo=(20, 20), colores=CLARO, escala_glifo=1.0):
-        arriba, abajo, borde, alpha_brillo = colores
-        w, h, rad = round(ancho * k), round(alto * k), round(radio * k)
-        s, d = sombra(w, h, rad, round(4 * k), 10 * k, (13, 31, 64, 56))
-        margen = round(4 * k)
-        sup = pygame.Surface((s.get_width() + 2 * margen, s.get_height() + 2 * margen), pygame.SRCALPHA)
-        cx, cy = sup.get_width() // 2, sup.get_height() // 2
-        sup.blit(s, (cx + d[0], cy + d[1]))
-        base = pygame.Surface((w, h), pygame.SRCALPHA)
-        for y in range(h):
-            t = y / max(1, h - 1)
-            color = tuple(round(a + (b - a) * t) for a, b in zip(arriba, abajo))
-            pygame.draw.line(base, color, (0, y), (w - 1, y))
-        forma = pygame.Surface((w, h), pygame.SRCALPHA)
-        pygame.draw.rect(forma, (255, 255, 255, 255), forma.get_rect(), border_radius=rad)
-        base.blit(forma, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-        pygame.draw.rect(base, borde, base.get_rect(), max(1, round(1.5 * k)), border_radius=rad)
-        x0, y0 = cx - w // 2, cy - h // 2
-        sup.blit(base, (x0, y0))
-        bx, by, bw, bh = (round(v * k) for v in brillo)
-        luz = pygame.Surface((bw, bh), pygame.SRCALPHA)
-        for y in range(bh):
-            pygame.draw.line(luz, (255, 255, 255, round(alpha_brillo * (1 - y / max(1, bh - 1)))), (0, y), (bw, y))
-        forma = pygame.Surface((bw, bh), pygame.SRCALPHA)
-        pygame.draw.rect(forma, (255, 255, 255, 255), forma.get_rect(), border_radius=rad)
-        luz.blit(forma, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-        sup.blit(luz, (x0 + bx, y0 + by))
-        # escala_glifo: para reutilizar un glifo de otro tamaño (p. ej. pausa de 48 en un hueco de 35).
-        sup.blit(cargar_svg(glifo, k * escala_glifo), (x0 + round(pos_glifo[0] * k), y0 + round(pos_glifo[1] * k)))
-        self.img = sup.convert_alpha()
-        self.tam = (w, h)
-
-    def dibujar(self, sup, centro):
-        sup.blit(self.img, self.img.get_rect(center=centro))
+    def expansion(self, sup, t, captura):
+        """El círculo crece desde la esquina mostrando dentro 'captura' (Configuración tal
+        cual se verá) hasta cubrirlo todo (t de 0 a 1). Se recorta fila a fila con copias
+        opacas (barato en la Pi)."""
+        t = t * t * t * (t * (6 * t - 15) + 10)          # 'smootherstep'
+        w, h = sup.get_size()
+        cx, cy = self.centro
+        lejos = math.hypot(max(cx, w - cx), max(cy, h - cy)) + 2
+        r = self.radio + (lejos - self.radio) * t
+        if r >= lejos - 1:
+            sup.blit(captura, (0, 0))
+            return
+        for y in range(max(0, math.floor(cy - r)), min(h, math.ceil(cy + r) + 1)):
+            dy = y + .5 - cy
+            if abs(dy) >= r:
+                continue
+            dx = math.sqrt(r * r - dy * dy)
+            x0, x1 = max(0, round(cx - dx)), min(w, round(cx + dx))
+            if x1 > x0:
+                sup.blit(captura, (x0, y), (x0, y, x1 - x0, 1))
+        if t < .9:
+            pygame.draw.circle(sup, BLANCO, (cx, cy), round(r), max(1, self.e.n(2.5)))
 
 
 class ElementoBurbuja:
-    """Elemento de carrusel con burbuja SVG.
+    """Burbuja del carrusel con su nombre debajo.
 
-    Cada tamaño entre centro y lado se monta una sola vez, con su sombra, sobre el
-    fondo blanco de la pantalla y sin transparencia: al moverse, cada burbuja es una
-    única copia opaca (el pygame de la Raspberry no usa NEON y mezclar transparencias
-    en cada fotograma era lo más lento). Las vecinas nunca se solapan: están a 340 px
-    del diseño y cada imagen mide como mucho ~320.
+    Cada tamaño entre centro y lado se monta una vez, con su sombra, sobre el fondo
+    blanco y sin transparencia: al moverse, cada burbuja es una única copia opaca. Con
+    fondo de pantalla se usan los mismos pasos con transparencia ('transparente').
     """
     PASOS = 12
 
-    def __init__(self, svg, e, fondo=(255, 255, 255)):
-        centro = Burbuja(svg, e.n(DIAMETRO_CENTRO))
-        lado = Burbuja(svg, e.n(DIAMETRO_LADO))
-        self.diametros = (centro.diametro, lado.diametro)
-        self.pasos = []                  # (imagen opaca, posición del centro dentro) de centro a lado
+    def __init__(self, svg, etiqueta, e, fondo=BLANCO):
+        self.e = e
+        centro_img, centro_c = estilo.burbuja(e.n(DIAMETRO_CENTRO), svg)
+        self.diametros = (e.n(DIAMETRO_CENTRO), e.n(DIAMETRO_LADO))
+        self.transparente = False
+        self.pasos, self.pasos_alpha = [], []
         for j in range(self.PASOS + 1):
-            if j in (0, self.PASOS):
-                b = centro if j == 0 else lado
-                img, ancla, sombra_img, desp = b.img, b.ancla, b.sombra, b.desp
+            f = self.tam(j / self.PASOS)[0] / self.diametros[0]
+            if j == 0:
+                img, c = centro_img, centro_c
+            elif j == self.PASOS:
+                img, c = estilo.burbuja(self.diametros[1], svg)
             else:
-                f = self.tam(j / self.PASOS)[0] / centro.diametro
-                escalar = lambda s: pygame.transform.smoothscale(
-                    s, (max(1, round(s.get_width() * f)), max(1, round(s.get_height() * f))))
-                img, sombra_img = escalar(centro.img), escalar(centro.sombra)
-                ancla = (round(centro.ancla[0] * f), round(centro.ancla[1] * f))
-                desp = (round(centro.desp[0] * f), round(centro.desp[1] * f))
-            # Rectángulos de sombra e imagen respecto al centro de la burbuja.
-            r_sombra = pygame.Rect(desp, sombra_img.get_size())
-            r_img = pygame.Rect((-ancla[0], -ancla[1]), img.get_size())
-            caja = r_sombra.union(r_img)
-            opaca = pygame.Surface(caja.size).convert()
+                img = pygame.transform.smoothscale(
+                    centro_img, (max(1, round(centro_img.get_width() * f)), max(1, round(centro_img.get_height() * f))))
+                c = (round(centro_c[0] * f), round(centro_c[1] * f))
+            opaca = pygame.Surface(img.get_size()).convert()
             opaca.fill(fondo)
-            opaca.blit(sombra_img, (r_sombra.x - caja.x, r_sombra.y - caja.y))
-            opaca.blit(img, (r_img.x - caja.x, r_img.y - caja.y))
-            self.pasos.append((opaca, (-caja.x, -caja.y)))
+            opaca.blit(img, (0, 0))
+            self.pasos.append((opaca, c))
+            self.pasos_alpha.append((img, c))
+        self.pulsada = estilo.burbuja(self.diametros[0], svg, pulsada=True, fondo=fondo)
+        self.pulsada_alpha = estilo.burbuja(self.diametros[0], svg, pulsada=True)
+        self.nombre_centro = estilo.fuente(e.n(26), "Bold").render(etiqueta, True, TEXTO)
+        self.nombre_lado = estilo.fuente(e.n(21), "SemiBold").render(etiqueta, True, (136, 136, 136))
 
     def tam(self, t):
         d = round(self.diametros[0] + (self.diametros[1] - self.diametros[0]) * t)
         return d, d
 
-    def dibujar(self, sup, centro, t, alpha, estatico):
-        img, ancla = self.pasos[round(t * self.PASOS)]
+    def dibujar(self, sup, centro, t, alpha, pulsada=False):
+        if pulsada:
+            img, ancla = self.pulsada_alpha if self.transparente else self.pulsada
+        else:
+            img, ancla = (self.pasos_alpha if self.transparente else self.pasos)[round(t * self.PASOS)]
         if alpha < 255:
             img.set_alpha(alpha)
         sup.blit(img, (centro[0] - ancla[0], centro[1] - ancla[1]))
         if alpha < 255:
             img.set_alpha(None)
+        # Nombre debajo: grande y negro en el centro, pequeño y gris a los lados.
+        nombre = self.nombre_centro if t < .5 else self.nombre_lado
+        y = centro[1] + self.tam(t)[0] // 2 + self.e.n(32 if t < .5 else 30)
+        if alpha < 255:
+            nombre = nombre.copy()
+            nombre.set_alpha(alpha)
+        sup.blit(nombre, nombre.get_rect(center=(centro[0], y)))
 
 
-def dibujar_carrusel(sup, e, elementos, acciones, posicion, zona):
+def dibujar_carrusel(sup, e, elementos, acciones, posicion, zona, pulsada=None):
     """Carrusel circular: el elemento 'posicion' en el centro y los vecinos a los lados.
 
     Registra zonas (solo en reposo): el del centro -> su acción; los laterales -> girar.
@@ -262,309 +314,163 @@ def dibujar_carrusel(sup, e, elementos, acciones, posicion, zona):
         x = round(cx + d * separacion)
         alpha = 255 if abs(d) <= 1 else round(255 * (1.5 - abs(d)) / .5)
         t = min(1, abs(d))
-        elementos[i].dibujar(sup, (x, cy), t, alpha, estatico)
+        elementos[i].dibujar(sup, (x, cy), t, alpha, pulsada=estatico and abs(d) < .5 and pulsada == acciones[i])
         if estatico and abs(d) <= 1:
             w, h = elementos[i].tam(t)
             rect = pygame.Rect(0, 0, w, h)
             rect.center = (x, cy)
-            if abs(d) < .5:
-                zona(rect, acciones[i])
-            else:
-                zona(rect, "carrusel_izq" if d < 0 else "carrusel_der")
-
-
-def caja_logo(rect, logo, fuente, grosor):
-    """Rectángulo 'logo' del diseño (borde #212121, radio 8) con el logo de TerraHub.
-
-    Devuelve la caja ya pintada, para no reescalar el logo en cada fotograma.
-    """
-    caja = pygame.Surface(rect.size, pygame.SRCALPHA)
-    pygame.draw.rect(caja, (255, 255, 255), caja.get_rect(), border_radius=max(2, rect.height // 10))
-    pygame.draw.rect(caja, TEXTO, caja.get_rect(), grosor, border_radius=max(2, rect.height // 10))
-    texto = fuente.render("TerraHub", True, TEXTO)
-    ancho = texto.get_width()
-    if logo:
-        alto = rect.height - 12
-        logo = pygame.transform.smoothscale(
-            logo, (max(1, round(logo.get_width() * alto / logo.get_height())), alto))
-        ancho += logo.get_width() + 10
-    x = rect.width // 2 - ancho // 2
-    if logo:
-        caja.blit(logo, (x, 6))
-        x += logo.get_width() + 10
-    caja.blit(texto, texto.get_rect(midleft=(x, rect.height // 2)))
-    return caja
-
-
-def aviso(sup, texto, fuente, y):
-    """Mensaje breve sobre la parte baja de la pantalla."""
-    t = fuente.render(texto, True, (255, 255, 255))
-    caja = t.get_rect(center=(sup.get_width() // 2, y)).inflate(32, 18)
-    pygame.draw.rect(sup, (43, 52, 66), caja, border_radius=caja.height // 2)
-    sup.blit(t, t.get_rect(center=caja.center))
-
-
-class BarraSuperior:
-    """Barra de estado de arriba: red a la izquierda; hora y círculo a la derecha.
-
-    Banda gris clara con brillo arriba, sombra debajo y un corte blanco en diagonal
-    (referencia del equipo). Lo fijo se pinta una vez en 'fondo' (opaco); cada
-    fotograma solo se copian la hora (cacheada por minuto) y el círculo.
-    Tocar la red abre 'Redes disponibles'; tocar el círculo abre los ajustes.
-    """
-    def __init__(self, e, ancho, color=(255, 255, 255)):
-        """'color': el de la pantalla justo debajo (la sombra se funde con él)."""
-        self.e = e
-        k = e.k
-        alto = e.n(BARRA_ALTO)
-        sombra_alto = max(2, e.n(7))
-        self.fondo = pygame.Surface((ancho, alto + sombra_alto)).convert()
-        self.fondo.fill(color)
-        arriba, abajo = e.n(3), alto
-        for y in range(arriba, abajo):                  # banda: #dedede -> #cacaca
-            t = (y - arriba) / max(1, abajo - arriba - 1)
-            g = round(222 - 20 * t)
-            pygame.draw.line(self.fondo, (g, g, g), (0, y), (ancho, y))
-        pygame.draw.line(self.fondo, (244, 244, 244), (0, arriba), (ancho, arriba))
-        pygame.draw.line(self.fondo, (246, 246, 246), (0, arriba + 1), (ancho, arriba + 1))
-        pygame.draw.line(self.fondo, (178, 182, 188), (0, abajo - 1), (ancho, abajo - 1))
-        for i in range(sombra_alto):                    # sombra suave bajo la barra
-            t = (i + 1) / sombra_alto
-            tono = tuple(round(c * (.84 + .16 * t)) for c in color)
-            pygame.draw.line(self.fondo, tono, (0, abajo + i), (ancho, abajo + i))
-        # Corte blanco en diagonal ('/').
-        x = e.dx + BARRA_CORTE * k
-        inclinacion, grueso = (abajo - arriba) * .55, max(3, 13 * k)
-        pygame.draw.polygon(self.fondo, (255, 255, 255), [
-            (x + inclinacion, arriba), (x + inclinacion + grueso, arriba),
-            (x + grueso, abajo - 1), (x, abajo - 1)])
-        self.centro_y = (arriba + abajo) // 2
-        # Red: glifo wifi del diseño, oscuro sobre la barra clara.
-        wifi = cargar_svg("wifi.svg", k * .8, color="#2B3442")
-        self.zona_red = pygame.Rect(0, 0, round(e.dx + e.n(130)), alto + sombra_alto)
-        self.fondo.blit(wifi, wifi.get_rect(midleft=(round(e.dx + e.n(26)), self.centro_y)))
-        self.fuente = pygame.font.Font(None, e.n(38))
-        self._hora = ("", None)
-        self._circulo()
-
-    def _circulo(self):
-        """Burbuja de cristal de la esquina, con base azulada como los controles."""
-        e = self.e
-        (cx, cy), diam = CIRCULO
-        d = e.n(diam)
-        base = pygame.Surface((d, d), pygame.SRCALPHA)
-        for y in range(d):
-            t = y / max(1, d - 1)
-            color = tuple(round(a + (b - a) * t) for a, b in zip((250, 252, 255), (190, 204, 221)))
-            pygame.draw.line(base, color, (0, y), (d, y))
-        forma = pygame.Surface((d, d), pygame.SRCALPHA)
-        pygame.draw.circle(forma, (255, 255, 255, 255), (d // 2, d // 2), d // 2)
-        base.blit(forma, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-        pygame.draw.circle(base, (175, 192, 210), (d // 2, d // 2), d // 2, max(1, e.n(2)))
-        f = d / (2 * 62.75)                              # círculo de burbuja-default.svg
-        cristal = cargar_svg("burbuja-default.svg", f)
-        s, desp = sombra(d, d, d // 2, e.n(5), max(2, 8 * e.k), (13, 31, 64, 70))
-        r_sombra = pygame.Rect(desp, s.get_size())
-        r_cristal = pygame.Rect((-round(82 * f), -round(74 * f)), cristal.get_size())
-        caja = r_sombra.union(r_cristal).union(pygame.Rect(-d // 2, -d // 2, d, d))
-        img = pygame.Surface(caja.size, pygame.SRCALPHA)
-        c = (-caja.x, -caja.y)
-        img.blit(s, (c[0] + r_sombra.x, c[1] + r_sombra.y))
-        img.blit(base, (c[0] - d // 2, c[1] - d // 2))
-        img.blit(cristal, (c[0] + r_cristal.x, c[1] + r_cristal.y))
-        self.circulo = img.convert_alpha()
-        # Pegado al borde de arriba (no al marco centrado del diseño).
-        self.centro = (round(e.dx + cx * e.k), round(cy * e.k))
-        self.radio = d // 2
-        self.ancla = c
-        # Zona táctil: más ancha que el círculo, pero sin bajar de su borde (debajo
-        # empiezan las filas de los ajustes).
-        r = self.radio + e.n(30)
-        self.zona_circulo = pygame.Rect(self.centro[0] - r, 0, 2 * r, self.centro[1] + self.radio)
-
-    def dibujar(self, sup, zona, hora, fijo=True):
-        """'fijo': el fondo de la barra ya está en la superficie (p. ej. en el fondo de Inicio)."""
-        e = self.e
-        if not fijo:
-            sup.blit(self.fondo, (0, 0))
-        if self._hora[0] != hora:
-            self._hora = (hora, self.fuente.render(hora, True, TEXTO))
-        texto = self._hora[1]
-        sup.blit(texto, texto.get_rect(midright=(round(e.dx + RELOJ_DER * e.k), self.centro_y + 1)))
-        sup.blit(self.circulo, (self.centro[0] - self.ancla[0], self.centro[1] - self.ancla[1]))
-        self.zonas(zona)
-
-    def zonas(self, zona):
-        zona(self.zona_red, "redes")
-        zona(self.zona_circulo, "panel")
-
-    def expansion(self, sup, t, captura):
-        """El círculo crece desde la esquina mostrando dentro 'captura' (la pantalla de
-        ajustes tal cual se verá), hasta cubrirlo todo (t de 0 a 1).
-
-        Al llegar a 1 la pantalla ya es exactamente la de ajustes: el cambio de estado no
-        se nota. El círculo se recorta fila a fila con copias opacas (barato en la Pi).
-        """
-        t = t * t * t * (t * (6 * t - 15) + 10)          # 'smootherstep': sin tirones al empezar ni al acabar
-        w, h = sup.get_size()
-        cx, cy = self.centro
-        lejos = math.hypot(max(cx, w - cx), max(cy, h - cy)) + 2
-        r = self.radio + (lejos - self.radio) * t
-        if r >= lejos - 1:
-            sup.blit(captura, (0, 0))
-            return
-        for y in range(max(0, math.floor(cy - r)), min(h, math.ceil(cy + r) + 1)):
-            dy = y + .5 - cy
-            if abs(dy) >= r:
-                continue
-            dx = math.sqrt(r * r - dy * dy)
-            x0, x1 = max(0, round(cx - dx)), min(w, round(cx + dx))
-            if x1 > x0:
-                sup.blit(captura, (x0, y), (x0, y, x1 - x0, 1))
-        # Borde fino del círculo, que se desvanece al final.
-        if t < .9:
-            pygame.draw.circle(sup, (175, 192, 210), (cx, cy), round(r), max(1, self.e.n(2)))
+            zona(rect, acciones[i] if abs(d) < .5 else ("carrusel_izq" if d < 0 else "carrusel_der"))
 
 
 class PantallaInicio:
     """Recursos ya escalados a la pantalla; se crean una vez por Vista."""
     def __init__(self, tam):
         self.esc = e = Escala(tam)
-        self.elementos = [ElementoBurbuja(svg, e) for _, _, svg in SECCIONES]
+        self.elementos = [ElementoBurbuja(svg, nombre, e) for nombre, _, svg in SECCIONES]
         self.acciones = [seccion for _, seccion, _ in SECCIONES]
-        self.izq = Control("flecha-izquierda.svg", e.k)
-        self.der = Control("flecha-derecha.svg", e.k)
+        lado = e.n(LADO_FLECHA)
+        self.izq = estilo.Boton(lado, lado, glifo="flecha-izquierda.svg", lado_glifo=lado * .5)
+        self.der = estilo.Boton(lado, lado, glifo="flecha-derecha.svg", lado_glifo=lado * .5)
         self.barra = BarraSuperior(e, tam[0])
-        self.fuente = pygame.font.Font(None, e.n(44))
-        self.fuente_aviso = pygame.font.Font(None, e.n(34))
-        try:
-            logo = pygame.image.load(str(INTERFAZ.parent / "imagenes" / "logo.png")).convert_alpha()
-        except (OSError, pygame.error):
-            logo = None
+        self.fuente_aviso = fuente_aviso(e)
+        r = e.r(LOGO)
+        self.logo = estilo.imagen("logo-caja.png", alto=r.height)
+        self.logo_caja = pygame.Surface(self.logo.get_size(), pygame.SRCALPHA)
+        pygame.draw.rect(self.logo_caja, BLANCO, self.logo_caja.get_rect(), border_radius=e.n(12))
+        self.logo_caja.blit(self.logo, (0, 0))
+        self.logo_rect = self.logo.get_rect(center=r.center)
         # Lo que no se mueve (fondo, barra y logo) se pinta una sola vez.
         self.fondo = pygame.Surface(tam).convert()
-        self.fondo.fill((255, 255, 255))
+        self.fondo.fill(BLANCO)
         self.fondo.blit(self.barra.fondo, (0, 0))
-        self.fondo.blit(caja_logo(e.r(LOGO), logo, self.fuente, max(1, e.n(2))), e.r(LOGO))
+        self.fondo.blit(self.logo, self.logo_rect)
 
-    def dibujar(self, sup, posicion, zona, aviso_texto="", hora="", expansion=0.0, captura=None):
-        """Pinta la pantalla. 'posicion' es el índice (decimal) del carrusel en el centro.
+    def _puntos(self, sup, actual):
+        """Puntos de página: el de la sección del centro es una píldora magenta."""
+        e = self.esc
+        n = len(self.elementos)
+        anchos = [e.n(26) if i == actual else e.n(8) for i in range(n)]
+        hueco = e.n(12)
+        x = e.p((640, 0))[0] - (sum(anchos) + hueco * (n - 1)) // 2
+        y = e.p((0, PUNTOS_Y))[1]
+        alto = e.n(8)
+        for i, w in enumerate(anchos):
+            pygame.draw.rect(sup, MAGENTA if i == actual else estilo.VIDRIO,
+                             (x, y - alto // 2, w, alto), border_radius=alto // 2)
+            x += w + hueco
 
-        'zona(rect, accion)' registra las zonas táctiles. Con 'expansion' > 0 el círculo
-        de la barra está creciendo (o encogiendo) con los ajustes ('captura') dentro y
-        nada responde debajo.
-        """
+    def dibujar(self, sup, posicion, zona, aviso_texto="", hora="", expansion=0.0, captura=None,
+                fondo=None, pulsado=None):
+        """'posicion' es el índice (decimal) del carrusel en el centro; 'pulsado', la
+        acción que se está tocando (la burbuja o la flecha se ven pulsadas)."""
         e = self.esc
         if expansion > 0:
             zona = lambda rect, accion: None
-        sup.blit(self.fondo, (0, 0))
-        dibujar_carrusel(sup, e, self.elementos, self.acciones, posicion, zona)
-        # Controles laterales.
+        if fondo is not None:
+            sup.blit(fondo, (0, 0))
+            sup.blit(self.barra.fondo, (0, 0))
+            sup.blit(self.logo_caja, self.logo_rect)
+        else:
+            sup.blit(self.fondo, (0, 0))
+        for elemento in self.elementos:
+            elemento.transparente = fondo is not None
+        dibujar_carrusel(sup, e, self.elementos, self.acciones, posicion, zona, pulsado)
         for control, centro, accion in ((self.izq, FLECHA_IZQ, "carrusel_izq"),
                                         (self.der, FLECHA_DER, "carrusel_der")):
-            control.dibujar(sup, e.p(centro))
-            rect = pygame.Rect(0, 0, e.n(100), e.n(100))
-            rect.center = e.p(centro)
-            zona(rect, accion)
+            r = control.dibujar(sup, e.p(centro), pulsado == accion)
+            zona(r.inflate(e.n(40), e.n(40)), accion)
+        self._puntos(sup, round(posicion) % len(self.elementos))
         self.barra.dibujar(sup, zona, hora)
         if expansion > 0 and captura is not None:
             self.barra.expansion(sup, expansion, captura)
         if aviso_texto:
-            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(70))
+            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(60))
 
 
-def _mezcla(a, b, t):
-    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+# --- Configuración ------------------------------------------------------------------
+FONDO_ARRIBA, FONDO_ABAJO = (156, 46, 156), (206, 66, 206)
 
 
-def _aclarar(c, cantidad):
-    return tuple(min(255, round(x + (255 - x) * cantidad)) for x in c)
+def fondo_magenta(tam, e, arriba=None):
+    """Fondo de las listas: degradado magenta de arriba abajo y una franja más clara en
+    diagonal a la derecha (como un reflejo en el vidrio). 'arriba': y donde empieza."""
+    w, h = tam
+    sup = pygame.Surface(tam).convert()
+    for y in range(h):
+        sup.fill(mezcla(FONDO_ARRIBA, FONDO_ABAJO, y / max(1, h - 1)), (0, y, w, 1))
+    luz = pygame.Surface(tam, pygame.SRCALPHA)
+    x_arriba, x_abajo = e.p((573, 0))[0], e.p((513, 0))[0]
+    for y in range(h):
+        x0 = round(x_arriba + (x_abajo - x_arriba) * y / max(1, h - 1))
+        ancho = w - x0
+        for x in range(0, ancho, 8):                 # más clara junto al borde, se apaga a la derecha
+            a = round(26 - 12 * x / max(1, ancho))
+            luz.fill((255, 255, 255, a), (x0 + x, y, min(8, ancho - x), 1))
+    sup.blit(luz, (0, 0))
+    return sup
 
 
-def _oscurecer(c, f):
-    return tuple(round(x * f) for x in c)
+def fila_pulsada(w, alto):
+    """Fila pulsada o elegida: violeta con dos líneas blancas y un halo suave."""
+    halo = max(2, alto // 10)
+    s = pygame.Surface((w, alto + 2 * halo), pygame.SRCALPHA)
+    for i in range(halo):
+        a = round(80 * (1 - i / halo) ** 2)
+        s.fill((150, 130, 255, a), (0, halo - 1 - i, w, 1))
+        s.fill((150, 130, 255, a), (0, halo + alto + i, w, 1))
+    s.blit(estilo.degradado(w, alto, (132, 117, 255), (112, 93, 252)), (0, halo))
+    linea = max(1, alto // 32)
+    s.fill(BLANCO, (0, halo, w, linea))
+    s.fill(BLANCO, (0, halo + alto - linea, w, linea))
+    return s.convert_alpha(), halo
 
 
 class PantallaAjustes:
-    """Ajustes en lista, con el estilo de los menús de la PS Vita (referencia del equipo).
+    """Configuración: lista sobre el fondo magenta; 'Opciones de energía' (arriba)
+    despliega Suspender, Reiniciar y Apagar. Se abre y se cierra con el círculo.
 
-    Fondo morado con luces suaves, filas en bandas de color con icono y texto blancos, y
-    la fila tocada resaltada en cian. 'Opciones de energía' (arriba del todo) despliega
-    Suspender, Reiniciar y Apagar. Se abre y se cierra con el círculo de la barra.
-
-    Cada fila (normal y resaltada) se monta una vez como imagen opaca: al deslizar o
-    desplegar solo se copian. Desplazamiento en px del diseño, como 'Redes'.
+    El fondo es una imagen opaca; de cada fila solo se copian icono y texto (pequeños,
+    ya pintados). Desplazamiento en px del diseño.
     """
-    ARRIBA, ABAJO = (92, 16, 146), (206, 66, 206)          # degradado del fondo
-    FILA_ARRIBA, FILA_ABAJO = (112, 24, 170), (196, 58, 196)
-    CIAN, VIOLETA = (70, 228, 255), (108, 88, 252)
-
     def __init__(self, tam):
         self.esc = e = Escala(tam)
         self.tam = w, h = tam
-        self.barra = BarraSuperior(e, w, self.ARRIBA)
+        self.barra = BarraSuperior(e, w)
         self.arriba = self.barra.fondo.get_height()        # la lista empieza bajo la barra
         self.fila = e.n(FILA_ALTO)
-        self.fondo = pygame.Surface(tam).convert()
-        for y in range(h):
-            pygame.draw.line(self.fondo, _mezcla(self.ARRIBA, self.ABAJO, y / max(1, h - 1)), (0, y), (w, y))
-        luz = pygame.Surface(tam, pygame.SRCALPHA)       # luces difuminadas, como en la Vita
-        for cx, cy, rx, ry, a in ((.78, .42, .55, .10, 46), (.30, .78, .65, .09, 38), (.62, .97, .80, .07, 60)):
-            pygame.draw.ellipse(luz, (255, 255, 255, a), (round((cx - rx) * w), round((cy - ry) * h),
-                                                           round(2 * rx * w), round(2 * ry * h)))
-        self.fondo.blit(_difuminar(luz, e.n(40)), (0, 0))
+        self.fondo = fondo_magenta(tam, e)
         self.fondo.blit(self.barra.fondo, (0, 0))
-        fuente = pygame.font.Font(None, e.n(46))
-        orden = AJUSTES_FILAS[:1] + ENERGIA_OPCIONES + AJUSTES_FILAS[1:]
-        subopciones = {a for a, _, _ in ENERGIA_OPCIONES}
-        self.filas = {}
-        for i, (accion, etiqueta, svg) in enumerate(orden):
-            base = _mezcla(self.FILA_ARRIBA, self.FILA_ABAJO, i / (len(orden) - 1))
-            sub = accion in subopciones
-            if sub:
-                base = _oscurecer(base, .86)
-            self.filas[accion] = tuple(self._fila(etiqueta, svg, base, sub, resaltada, fuente)
-                                       for resaltada in (False, True))
-        self.fuente_valor = pygame.font.Font(None, e.n(36))
-        self.fuente_aviso = pygame.font.Font(None, e.n(34))
+        fuente = estilo.fuente(e.n(23), "SemiBold")
+        fuente_sub = estilo.fuente(e.n(21), "SemiBold")
+        self.contenido = {}
+        for accion, etiqueta, svg in AJUSTES_FILAS:
+            self.contenido[accion] = self._contenido(etiqueta, svg, fuente, e.n(33), e.n(42), e.n(78))
+        for accion, etiqueta, svg in ENERGIA_OPCIONES:
+            self.contenido[accion] = self._contenido(etiqueta, svg, fuente_sub, e.n(28), e.n(87), e.n(122))
+        self.separador = pygame.Surface((w, 1), pygame.SRCALPHA)
+        self.separador.fill((255, 255, 255, 46))
+        self.sombra_sub = pygame.Surface((w, self.fila), pygame.SRCALPHA)
+        self.sombra_sub.fill((60, 0, 70, 34))
+        self.pulsada, self.halo = fila_pulsada(w, self.fila)
+        self.flecha = estilo.icono("flecha-derecha.svg", e.n(30), BLANCO)
+        self.flecha_abajo = estilo.icono("flecha-abajo.svg", e.n(30), BLANCO)
+        self.fuente_valor = estilo.fuente(e.n(19), "Medium")
+        self.fuente_aviso = fuente_aviso(e)
         self._textos = {}
 
-    def _fila(self, etiqueta, svg, base, sub, resaltada, fuente):
-        e, (w, _), alto = self.esc, self.tam, self.fila
-        s = pygame.Surface((w, alto)).convert()
-        if resaltada:
-            # Banda cian brillante en los bordes y violeta en el centro.
-            for y in range(alto):
-                d = min(y, alto - 1 - y) / (alto / 2)
-                t = min(1, d * 2.2)
-                pygame.draw.line(s, _mezcla(self.CIAN, self.VIOLETA, t * t * (3 - 2 * t)), (0, y), (w, y))
-            for y in (0, 1, alto - 2, alto - 1):
-                pygame.draw.line(s, (205, 250, 255), (0, y), (w, y))
-        else:
-            claro = _aclarar(base, .14)
-            for y in range(alto):
-                pygame.draw.line(s, _mezcla(claro, base, y / max(1, alto - 1)), (0, y), (w, y))
-            brillo = pygame.Surface((w, alto), pygame.SRCALPHA)   # reflejo en diagonal
-            pygame.draw.polygon(brillo, (255, 255, 255, 16), [
-                (w * .52, 0), (w, 0), (w, alto), (w * .52 - alto * .8, alto)])
-            s.blit(brillo, (0, 0))
-            pygame.draw.line(s, _aclarar(base, .38), (0, 0), (w, 0))
-            pygame.draw.line(s, _oscurecer(base, .72), (0, alto - 1), (w, alto - 1))
-        sangria = e.n(56) if sub else 0
-        texto_svg = (INTERFAZ / svg).read_text(encoding="utf-8")
-        ancho_svg = float(re.search(r'width="([\d.]+)"', texto_svg).group(1))
-        lado = e.n(34 if sub else 42)
-        if '"#222222"' in texto_svg:                     # iconos de energía: oscuros en el diseño
-            icono = cargar_svg(svg, lado / ancho_svg, "white", "#222222")
-        else:
-            icono = cargar_svg(svg, lado / ancho_svg)
-        s.blit(icono, icono.get_rect(center=(e.n(84) + sangria, alto // 2)))
-        sombra_txt = fuente.render(etiqueta, True, _oscurecer(base if not resaltada else self.VIOLETA, .5))
-        texto = fuente.render(etiqueta, True, (255, 255, 255))
-        x = e.n(140) + sangria
-        s.blit(sombra_txt, sombra_txt.get_rect(midleft=(x + 1, alto // 2 + 2)))
-        s.blit(texto, texto.get_rect(midleft=(x, alto // 2)))
-        return s
+    def _contenido(self, etiqueta, svg, fuente, lado, x_icono, x_texto):
+        """Icono y texto de una fila, en blanco sobre transparente: (imagen, x)."""
+        ico = estilo.icono(svg, lado, BLANCO)
+        t = fuente.render(etiqueta, True, BLANCO)
+        sombra_t = fuente.render(etiqueta, True, (90, 20, 90))
+        x0 = x_icono - lado // 2
+        ancho = x_texto - x0 + t.get_width() + 2
+        alto = self.fila
+        s = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+        s.blit(ico, ico.get_rect(center=(x_icono - x0, alto // 2)))
+        s.blit(sombra_t, sombra_t.get_rect(midleft=(x_texto - x0 + 1, alto // 2 + 2)))
+        s.blit(t, t.get_rect(midleft=(x_texto - x0, alto // 2)))
+        return s.convert_alpha(), x0
 
     def maximo(self, energia):
         """Desplazamiento máximo (px del diseño) con la energía desplegada 'energia' (0..1)."""
@@ -575,31 +481,32 @@ class PantallaAjustes:
         if valor not in self._textos:
             if len(self._textos) > 20:
                 self._textos.clear()
-            self._textos[valor] = self.fuente_valor.render(valor, True, (240, 225, 255))
+            self._textos[valor] = self.fuente_valor.render(valor, True, (250, 235, 250))
         return self._textos[valor]
 
-    def _pintar(self, sup, accion, y, area, zona, resaltado, valores):
+    def _pintar(self, sup, accion, y, area, zona, resaltado, valores, sub=False, energia=0.0):
         if y >= area.bottom or y + self.fila <= area.top:
             return
-        sup.blit(self.filas[accion][resaltado == accion], (0, y))
+        e, w = self.esc, self.tam[0]
+        if sub:
+            sup.blit(self.sombra_sub, (0, y))
+        if resaltado == accion:
+            sup.blit(self.pulsada, (0, y - self.halo))
+        img, x = self.contenido[accion]
+        sup.blit(img, (x, y))
         valor = valores.get(accion)
+        derecha = w - e.n(29)
         if valor:
             t = self._texto(valor)
-            sup.blit(t, t.get_rect(midright=(self.tam[0] - self.esc.n(56), y + self.fila // 2)))
+            sup.blit(t, t.get_rect(midright=(derecha, y + self.fila // 2)))
+        elif accion in CON_FLECHA or accion == "energia":
+            flecha = self.flecha_abajo if accion == "energia" and energia > .5 else self.flecha
+            sup.blit(flecha, flecha.get_rect(center=(w - e.n(42), y + self.fila // 2)))
+        sup.blit(self.separador, (0, y + self.fila - 1))
         if zona:
-            rect = area.clip(pygame.Rect(0, y, self.tam[0], self.fila))
+            rect = area.clip(pygame.Rect(0, y, w, self.fila))
             if rect.height > 0:
                 zona(rect, accion)
-
-    def _flecha(self, sup, y, energia):
-        """Flecha de la fila de energía: '>' plegada, 'v' desplegada."""
-        e = self.esc
-        cx, cy, s = self.tam[0] - e.n(64), y + self.fila // 2, e.n(13)
-        a = math.pi / 2 * energia
-        puntos = []
-        for px, py in ((-s / 2, -s), (s / 2, 0), (-s / 2, s)):
-            puntos.append((cx + px * math.cos(a) - py * math.sin(a), cy + px * math.sin(a) + py * math.cos(a)))
-        pygame.draw.lines(sup, (255, 255, 255), False, puntos, max(2, e.n(5)))
 
     def dibujar(self, sup, desplazamiento, energia, zona, aviso_texto="", hora="",
                 valores=None, resaltado=None, tocable=True):
@@ -613,9 +520,7 @@ class PantallaAjustes:
         sup.set_clip(area)
         y = self.arriba - round(desplazamiento * e.k)
         for accion, _, _ in AJUSTES_FILAS:
-            self._pintar(sup, accion, y, area, zona_filas, resaltado, valores)
-            if accion == "energia":
-                self._flecha(sup, y, energia)
+            self._pintar(sup, accion, y, area, zona_filas, resaltado, valores, energia=energia)
             y += self.fila
             if accion == "energia" and energia > 0:
                 # Las opciones salen de debajo de la fila; las demás bajan a la vez.
@@ -624,10 +529,10 @@ class PantallaAjustes:
                 sup.set_clip(hueco)
                 for i, (opcion, _, _) in enumerate(ENERGIA_OPCIONES):
                     self._pintar(sup, opcion, y + i * self.fila - (len(ENERGIA_OPCIONES) * self.fila - alto),
-                                 hueco, zona_filas if energia > .999 else None, resaltado, valores)
+                                 hueco, zona_filas if energia > .999 else None, resaltado, valores, sub=True)
                 sup.set_clip(area)
                 y += alto
         sup.set_clip(None)
         self.barra.dibujar(sup, lambda rect, accion: None, hora)
         if aviso_texto:
-            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(70))
+            aviso(sup, aviso_texto, self.fuente_aviso, sup.get_height() - e.n(58))

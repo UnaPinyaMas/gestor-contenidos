@@ -21,6 +21,8 @@ install -m 644 "$BASE/deploy/99-terrahub-touch.rules" /etc/udev/rules.d/99-terra
 # porque un archivo incorrecto en sudoers.d dejaría sudo inutilizable.
 visudo -cf "$BASE/deploy/terrahub.sudoers"
 install -m 440 "$BASE/deploy/terrahub.sudoers" /etc/sudoers.d/terrahub
+# Redes: conectarse a otras Wi-Fi desde la pantalla (polkit lo aplica al momento).
+install -m 644 "$BASE/deploy/50-terrahub-red.rules" /etc/polkit-1/rules.d/50-terrahub-red.rules
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=input --action=change
 systemctl daemon-reload

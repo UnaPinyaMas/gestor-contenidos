@@ -1,29 +1,34 @@
-"""Introduccion: terminar o saltar el video abre el menu."""
+"""Introducción (entrega v2, 6.1): el logotipo blanco aparece sobre fondo negro.
+
+Si hay recursos/videos/intro.mp4 se reproduce detrás; terminarla, o tocar la pantalla,
+abre el menú. Es la única pantalla sin barra superior ni controles.
+"""
 from pathlib import Path
 import pygame
 from video_player import VideoPlayer
-from menu import Vista, ANCHO, ALTO
+import estilo
 import tiempo
 
 BASE = Path(__file__).resolve().parent
 VIDEO_INICIO = BASE / "recursos" / "videos" / "intro.mp4"
-LOGO = BASE / "recursos" / "imagenes" / "logo.png"
+DURACION_MS = 1600                    # sin vídeo: lo que se ve el logotipo
+APARECER_MS = 850
 
 
 def mostrar_inicio():
-    vista = Vista()
+    pantalla = pygame.display.get_surface()
+    w, h = pantalla.get_size()
     reloj = tiempo.Reloj()
     reproductor = None
     logo = None
     try:
         try:
-            logo = pygame.image.load(str(LOGO)).convert_alpha()
-            logo = pygame.transform.smoothscale(logo, (250, 250))
+            logo = estilo.imagen("logo-vertical-blanco.png", alto=h * .46)
         except (OSError, pygame.error) as error:
             print("Logo no disponible:", error, flush=True)
         if VIDEO_INICIO.is_file():
             try:
-                reproductor = VideoPlayer(VIDEO_INICIO)
+                reproductor = VideoPlayer(VIDEO_INICIO, size=(w, h))
             except (OSError, RuntimeError) as error:
                 print("Intro no disponible:", error, flush=True)
 
@@ -35,10 +40,8 @@ def mostrar_inicio():
                 if evento.type == pygame.QUIT:
                     return False
                 if evento.type == pygame.KEYDOWN:
-                    if evento.key == pygame.K_ESCAPE:
-                        return False
-                    return True
-                if vista.posicion(evento) is not None:
+                    return evento.key != pygame.K_ESCAPE
+                if evento.type in (pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN):
                     return True
                 if evento.type in (pygame.MOUSEMOTION, pygame.WINDOWEXPOSED):
                     mover = True
@@ -54,24 +57,21 @@ def mostrar_inicio():
                 except RuntimeError as error:
                     print("Error en la intro:", error, flush=True)
                     return True
-            elif tiempo.ms() - inicio >= 1200:
+            elif tiempo.ms() - inicio >= DURACION_MS:
                 return True
 
-            alpha = min(255, (tiempo.ms() - inicio) * 255 // 850)
+            alpha = min(255, (tiempo.ms() - inicio) * 255 // APARECER_MS)
             if nuevo or alpha != ultimo_alpha:
-                vista.lienzo.fill((10, 15, 20))
+                pantalla.fill((0, 0, 0))
                 if reproductor:
-                    vista.lienzo.blit(reproductor.surface, (0, 75))
+                    pantalla.blit(reproductor.surface, reproductor.surface.get_rect(center=(w // 2, h // 2)))
                 if logo:
                     logo.set_alpha(alpha)
-                    vista.lienzo.blit(logo, logo.get_rect(center=(ANCHO // 2, ALTO // 2)))
-                else:
-                    vista.texto("TerraHub", (400, 300))
-                vista.preparar()
+                    pantalla.blit(logo, logo.get_rect(center=(w // 2, h // 2)))
                 ultimo_alpha = alpha
                 mover = True
             if mover:
-                vista.presentar()
+                pygame.display.flip()
             reloj.tick(60)
     finally:
         if reproductor:
